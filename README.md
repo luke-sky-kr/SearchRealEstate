@@ -2,7 +2,7 @@
 
 관심 아파트 단지의 매매·전세 매물 물량과 호가 추이를 추적하는 개인용 모니터링 도구.
 
-- 설계·계획: [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md)
+- 설계·계획: [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md) (§3·§6·§8은 2026-08-22 실측으로 갱신됨 — `CLAUDE.md` 참조)
 - Claude Code용 컨텍스트: [`CLAUDE.md`](./CLAUDE.md)
 
 ## 빠른 시작
@@ -28,19 +28,29 @@ python3 scripts/dedup.py apply <snapshot_id> data/verdicts_<snapshot_id>.json
 python3 scripts/integrity.py <snapshot_id> naver_data/<수집시각>/counts.json
 ```
 
+## 물량은 밴드로 읽는다
+
+네이버 매물의 96%는 층이 정확한 층수가 아니라 저/중/고 대역으로만 표기된다. 그래서 같은 동·대역·평형·가격·방향의 여러 매물이 중복 등록인지 별개 세대인지 데이터로는 확정할 수 없다. 이 도구는 억지로 하나의 수를 만들지 않고 두 수를 함께 보여준다.
+
+- **상한** — 네이버 동일매물묶기 결과
+- **하한** — 자체 2차 병합 결과 (방향 불일치는 배제, 가격·설명 유사도로 점수화)
+
+첫 스냅샷(2026-08-22): 원시 1174건 → 밴드 592~716건.
+
 ## 단지 추가
 
 `collect_naver.py` 상단 `COMPLEXES` 딕셔너리에 단지명을 추가한다. 단지번호는 자동 검색되며,
-실패하면 `"단지명": "12345"` 형태로 직접 지정한다.
+실패하면 `"단지명": 12345` 형태로 직접 지정한다.
 
 ## 상태
 
 | 구성요소 | 상태 |
 |---|---|
-| 수집 agent (`collect_naver.py`) | 작성 완료 · 실기기 검증 전 |
-| DB 스키마 / 적재 | 작성 완료 · 실데이터 검증 전 |
-| Dedup (규칙 + AI 2단계) | 작성 완료 · 임계값 튜닝 필요 |
-| 정합성 감시 | 작성 완료 |
+| 수집 agent (`collect_naver.py`) | 완료 · 실데이터 검증됨 (누락 0) |
+| DB 스키마 / 적재 (`ingest.py`) | 완료 · 실데이터 검증됨 |
+| Dedup (규칙 + AI 2단계) | 규칙 완료 · AI 판정 자동화 미착수 |
+| 정합성 감시 (`integrity.py`) | 완료 |
 | 대시보드 | 미착수 (계획서 §9) |
+| run_all 오케스트레이터 | 미착수 |
 
-다음 할 일은 M1(첫 스냅샷 E2E) — `DEVELOPMENT_PLAN.md` §12 참조.
+M1(첫 스냅샷 E2E) 완료. 다음은 M2(대시보드 v1) — `DEVELOPMENT_PLAN.md` §12 참조.
