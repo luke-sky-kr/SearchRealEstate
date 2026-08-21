@@ -1,66 +1,73 @@
 #!/usr/bin/env python3
-"""Dedup agent 1단계: 규칙 기반 중복 매물 판정.
+"""Dedup agent: 네이버 묶음 위에 얹는 보수적 2차 병합.
 
-같은 실물(물건)을 여러 중개사가 올린 매물을 그룹으로 묶는다.
-- 동일 그룹 후보: 같은 (단지, 거래유형, 동, 전용면적)
-- 층 일치성: 정확층 일치(강), 층대역(저/중/고) 정합(중), 불일치(배제)
-- 가격 근접성, 방향, 설명 유사도로 점수화
-- 확신 구간은 rule로 확정, 애매 구간은 ambiguous로 내보내 AI가 판정
+물량은 단일 수치가 아니라 **밴드**로 본다.
+  상한 = 네이버 동일매물묶기 결과 (raw_articles.naver_group)
+  하한 = 여기서 계산하는 2차 병합 결과 (dedup_assignments)
+
+왜 밴드인가 (2026-08-22 실측 근거):
+  수집된 대표매물 716건 중 정확한 층이 표기된 것은 28건(4%)뿐이고, 나머지는
+  전부 저/중/고 대역이다. 34층 건물의 '저'는 11개 층에 걸치므로
+  (106동, 저, 84.5㎡, 39.0억, 남향) 4건이 4중 등록인지 실제 4세대인지
+  데이터만으로는 판별할 수 없다. 어느 한쪽을 정답으로 고르면 물량을 반드시
+  과대 또는 과소 계상하게 되므로, 두 수치를 모두 남긴다.
+
+1단계 (규칙, 자동): 같은 (단지, 거래유형, 동, 전용면적) 버킷 내 대표매물 쌍을 점수화.
+  - 방향 불일치는 즉시 배제. 한 세대가 두 방향일 수 없다 — 층이 대역으로만
+    주어지는 상황에서 가장 신뢰할 수 있는 분할자다.
+  - 층: 정확층끼리 일치 +3.0 / 대역끼리 일치는 +0.5 (정보량이 적어 약하게)
+        불일치는 배제
+  - 가격 동일 +2.0, 방향 일치 +1.0, 설명 유사도 가점
+  → 3.5 이상 병합 (= 동·층표기·전용·가격·방향 완전 일치 수준), 1.5~3.5는 애매 쌍
+
+2단계 (AI 판정): 애매 쌍을 Claude가 읽고 verdicts JSON 작성 후 apply.
 
 사용: python3 dedup.py <snapshot_id>
-출력: dedup_assignments 테이블 (rule/singleton), data/ambiguous_<sid>.json
+      python3 dedup.py apply <snapshot_id> <verdicts.json>
+출력: dedup_assignments 테이블, data/ambiguous_<sid>.json
 """
 import json, sqlite3, sys, os, re, itertools
 from collections import defaultdict
 
 DB = os.path.join(os.path.dirname(__file__), "..", "data", "monitor.db")
 
-def parse_floor(fi):
-    """'15/23' -> (15, 23, None), '중/23' -> (None, 23, '중')"""
-    if not fi:
-        return (None, None, None)
-    parts = str(fi).split("/")
-    total = None
-    if len(parts) == 2 and parts[1].isdigit():
-        total = int(parts[1])
-    f = parts[0]
-    if f.isdigit():
-        return (int(f), total, None)
-    band = f if f in ("저", "중", "고", "탑", "B1") else None
-    return (None, total, band)
+BANDS = ("저", "중", "고", "탑")
 
-def band_of(floor, total):
-    if floor is None or not total:
-        return None
-    r = floor / total
-    return "저" if r <= 1/3 else ("중" if r <= 2/3 else "고")
 
-def floor_score(a, b):
-    fa, ta, ba = parse_floor(a); fb, tb, bb = parse_floor(b)
-    if fa is not None and fb is not None:
-        return 3.0 if fa == fb else -99
-    if fa is not None and bb:  # 정확층 vs 대역
-        return 1.5 if band_of(fa, ta or tb) == bb else -99
-    if fb is not None and ba:
-        return 1.5 if band_of(fb, tb or ta) == ba else -99
-    if ba and bb:
-        return 1.0 if ba == bb else -99
-    return 0.5  # 정보 부족 — 판단 불가, 약한 가점만
+def floor_score(x, y):
+    """(정확층/대역, 총층)으로 층 정합성 점수. 배제는 -99."""
+    fx, fy = x["floor_target"], y["floor_target"]
+    if not fx or not fy:
+        return 0.0
+    ex, ey = fx.isdigit(), fy.isdigit()
+    if ex and ey:
+        return 3.0 if fx == fy else -99
+    if ex or ey:
+        # 정확층 vs 대역: 대역 안에 드는지 확인
+        exact, band = (int(fx), fy) if ex else (int(fy), fx)
+        total = x["floor_total"] or y["floor_total"]
+        if not total or band not in BANDS:
+            return 0.0
+        r = exact / total
+        actual = "저" if r <= 1/3 else ("중" if r <= 2/3 else "고")
+        return 0.5 if actual == band else -99
+    return 0.5 if fx == fy else -99
+
 
 def tokens(desc):
-    if not desc:
-        return set()
-    return set(re.findall(r"[가-힣A-Za-z0-9]+", desc))
+    return set(re.findall(r"[가-힣A-Za-z0-9]+", desc)) if desc else set()
+
 
 def desc_sim(a, b):
     ta, tb = tokens(a), tokens(b)
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
+    return len(ta & tb) / len(ta | tb) if ta and tb else 0.0
+
 
 def pair_score(x, y):
-    """같은 (단지,거래유형,동,전용면적) 내 매물 쌍의 동일물건 점수"""
-    s = floor_score(x["floor_info"], y["floor_info"])
+    """같은 (단지,거래유형,동,전용면적) 버킷 내 대표매물 쌍의 동일물건 점수."""
+    if x["direction"] and y["direction"] and x["direction"] != y["direction"]:
+        return -99  # 한 세대가 두 방향일 수 없다
+    s = floor_score(x, y)
     if s <= -90:
         return -99
     px, py = x["price_krw"], y["price_krw"]
@@ -71,14 +78,20 @@ def pair_score(x, y):
         elif diff <= 0.03: s += 0.0
         else:              s -= 2.5
     if x["direction"] and y["direction"]:
-        s += 0.5 if x["direction"] == y["direction"] else -1.5
+        s += 1.0
     ds = desc_sim(x["description"], y["description"])
     if ds >= 0.6:   s += 1.5
     elif ds >= 0.3: s += 0.5
     return s
 
-RULE_SAME = 4.0      # 이상이면 규칙만으로 동일 물건 확정
-RULE_DIFF = 1.0      # 미만이면 다른 물건 확정, 사이는 AI 판정 대상
+
+RULE_SAME = 3.5      # 이상이면 규칙만으로 동일 물건 확정
+RULE_DIFF = 1.5      # 미만이면 다른 물건 확정, 사이는 AI 판정 대상
+
+PAIR_FIELDS = ("article_no", "building", "floor_info", "price_krw", "direction",
+               "description", "realtor", "confirmed_date", "exposure_date",
+               "naver_group_n")
+
 
 class UF:
     def __init__(s, keys): s.p = {k: k for k in keys}
@@ -86,19 +99,66 @@ class UF:
         while s.p[k] != k:
             s.p[k] = s.p[s.p[k]]; k = s.p[k]
         return k
-    def union(s, a, b): s.p[s.find(a)] = s.find(b)
+    def union(s, a, b):
+        ra, rb = s.find(a), s.find(b)
+        if ra != rb: s.p[ra] = rb
+
+
+def load(con, sid):
+    return [dict(r) for r in con.execute(
+        "SELECT * FROM raw_articles WHERE snapshot_id=?", (sid,))]
+
+
+def write_groups(con, sid, arts, uf, ai_pairs=frozenset()):
+    """union-find 결과를 dedup_assignments에 기록. 그룹별 method 판정 포함."""
+    con.execute("DELETE FROM dedup_assignments WHERE snapshot_id=?", (sid,))
+    by_no = {a["article_no"]: a for a in arts}
+    groups = defaultdict(list)
+    for a in arts:
+        groups[uf.find(a["article_no"])].append(a["article_no"])
+    for root, members in groups.items():
+        gkey = f"g{sid}_{root}"
+        naver_groups = {by_no[m]["naver_group"] for m in members}
+        if len(members) == 1:
+            method, conf = "singleton", 1.0
+        elif any(m in ai_pairs for m in members):
+            method, conf = "ai", 0.85
+        elif len(naver_groups) > 1:
+            method, conf = "rule", 0.9      # 자체 2차 병합이 추가로 합친 그룹
+        else:
+            method, conf = "naver", 1.0     # 네이버 묶음 그대로
+        for m in members:
+            con.execute(
+                "INSERT INTO dedup_assignments(snapshot_id, article_no, group_key,"
+                " method, confidence, note) VALUES (?,?,?,?,?,?)",
+                (sid, m, gkey, method, conf, None))
+    con.commit()
+    return groups
+
+
+def base_uf(arts):
+    """네이버 묶음을 하한 계산의 출발점으로 삼는다 (상한 = 네이버 묶음)."""
+    uf = UF([a["article_no"] for a in arts])
+    for a in arts:
+        if a["naver_group"]:
+            uf.union(a["article_no"], a["naver_group"])
+    return uf
+
 
 def run(sid):
     con = sqlite3.connect(DB); con.row_factory = sqlite3.Row
-    arts = [dict(r) for r in con.execute(
-        "SELECT * FROM raw_articles WHERE snapshot_id=?", (sid,))]
-    buckets = defaultdict(list)
-    for a in arts:
-        key = (a["complex_no"], a["trade_type"], a["building"] or "?",
-               round(a["area_exclusive"] or 0, 1))
-        buckets[key].append(a)
+    arts = load(con, sid)
+    if not arts:
+        raise SystemExit(f"snapshot {sid}에 매물이 없습니다")
+    uf = base_uf(arts)
+    naver_groups = len({a["naver_group"] for a in arts})
 
-    uf = UF([a["article_no"] for a in arts])
+    reps = [a for a in arts if a["is_repr"]]
+    buckets = defaultdict(list)
+    for a in reps:
+        buckets[(a["complex_no"], a["trade_type"], a["building"] or "?",
+                 round(a["area_exclusive"] or 0, 1))].append(a)
+
     ambiguous = []
     for key, items in buckets.items():
         for x, y in itertools.combinations(items, 2):
@@ -108,68 +168,44 @@ def run(sid):
             elif s >= RULE_DIFF:
                 ambiguous.append({
                     "score": round(s, 2), "bucket": list(map(str, key)),
-                    "a": {k: x[k] for k in ("article_no","floor_info","price_krw","direction","description","realtor","confirmed_date","same_addr_cnt")},
-                    "b": {k: y[k] for k in ("article_no","floor_info","price_krw","direction","description","realtor","confirmed_date","same_addr_cnt")},
+                    "a": {k: x[k] for k in PAIR_FIELDS},
+                    "b": {k: y[k] for k in PAIR_FIELDS},
                 })
 
-    con.execute("DELETE FROM dedup_assignments WHERE snapshot_id=?", (sid,))
-    groups = defaultdict(list)
-    for a in arts:
-        groups[uf.find(a["article_no"])].append(a["article_no"])
-    for root, members in groups.items():
-        gkey = f"g{sid}_{root}"
-        for m in members:
-            method = "singleton" if len(members) == 1 else "rule"
-            con.execute("INSERT INTO dedup_assignments VALUES (?,?,?,?,?,?)",
-                        (sid, m, gkey, method, 0.95 if method == "rule" else 1.0, None))
-    con.commit()
-
+    groups = write_groups(con, sid, arts, uf)
     amb_path = os.path.join(os.path.dirname(DB), f"ambiguous_{sid}.json")
-    json.dump(ambiguous, open(amb_path, "w"), ensure_ascii=False, indent=1)
-    n_groups = len(groups)
-    print(f"snapshot {sid}: {len(arts)} articles -> {n_groups} rule-groups, "
-          f"{len(ambiguous)} ambiguous pairs -> {amb_path}")
+    json.dump(ambiguous, open(amb_path, "w", encoding="utf-8"),
+              ensure_ascii=False, indent=1)
+    print(f"snapshot {sid}: 원시 {len(arts)}건 / 네이버 묶음 {naver_groups}건(상한) "
+          f"-> 자체 2차 병합 {len(groups)}건(하한)")
+    print(f"  애매 쌍 {len(ambiguous)}건 -> {amb_path}")
+
 
 def apply_ai_verdicts(sid, verdict_path):
-    """AI 판정 결과 [{a, b, same: true/false, reason}] 반영 후 그룹 재계산"""
+    """AI 판정 결과 [{a, b, same: true/false, reason}] 반영 후 그룹 재계산."""
     con = sqlite3.connect(DB); con.row_factory = sqlite3.Row
-    verdicts = json.load(open(verdict_path))
-    rows = [dict(r) for r in con.execute(
-        "SELECT article_no, group_key, method FROM dedup_assignments WHERE snapshot_id=?", (sid,))]
-    uf = UF([r["article_no"] for r in rows])
-    ai_pairs = set()
-    for r in rows:  # 기존 rule 그룹 유지
-        pass
+    arts = load(con, sid)
+    verdicts = json.load(open(verdict_path, encoding="utf-8"))
+    # 기존 그룹(규칙 결과)을 출발점으로 삼아 AI가 same이라 한 쌍만 추가 병합한다.
+    uf = UF([a["article_no"] for a in arts])
     gm = defaultdict(list)
-    for r in rows:
+    for r in con.execute("SELECT article_no, group_key FROM dedup_assignments "
+                         "WHERE snapshot_id=?", (sid,)):
         gm[r["group_key"]].append(r["article_no"])
     for members in gm.values():
         for m in members[1:]:
             uf.union(members[0], m)
+    ai_pairs = set()
     for v in verdicts:
         if v.get("same"):
             uf.union(str(v["a"]), str(v["b"]))
-            ai_pairs.add(str(v["a"])); ai_pairs.add(str(v["b"]))
-    con.execute("DELETE FROM dedup_assignments WHERE snapshot_id=?", (sid,))
-    groups = defaultdict(list)
-    for r in rows:
-        groups[uf.find(r["article_no"])].append(r["article_no"])
-    for root, members in groups.items():
-        gkey = f"g{sid}_{root}"
-        for m in members:
-            if len(members) == 1:
-                method, conf = "singleton", 1.0
-            elif m in ai_pairs:
-                method, conf = "ai", 0.85
-            else:
-                method, conf = "rule", 0.95
-            con.execute("INSERT INTO dedup_assignments VALUES (?,?,?,?,?,?)",
-                        (sid, m, gkey, method, conf, None))
-    con.commit()
-    print(f"snapshot {sid}: AI verdicts applied -> {len(groups)} final groups")
+            ai_pairs.update({str(v["a"]), str(v["b"])})
+    groups = write_groups(con, sid, arts, uf, ai_pairs)
+    print(f"snapshot {sid}: AI 판정 {len(verdicts)}건 반영 -> 최종 {len(groups)}그룹")
+
 
 if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "apply":
+    if len(sys.argv) >= 4 and sys.argv[1] == "apply":
         apply_ai_verdicts(int(sys.argv[2]), sys.argv[3])
     else:
         run(int(sys.argv[1]))
