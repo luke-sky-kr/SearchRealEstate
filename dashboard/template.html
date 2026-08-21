@@ -246,6 +246,13 @@ td.desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-spa
     </section>
 
     <section class="card">
+      <header><h2>매물 분포</h2></header>
+      <div class="sub">호가 구간별 매물 수. 연한 막대는 네이버에 올라온 원시 매물(중복 포함), 진한 막대는 중복을 묶은 물건 — 두 막대의 차이가 곧 중복 등록량이다. 묶음에 딸린 매물은 그룹 대표 호가(최저가) 구간에 함께 넣는다.</div>
+      <div class="legend" id="hist-legend"></div>
+      <div class="facets" id="hist-facets"></div>
+    </section>
+
+    <section class="card">
       <header><h2>물량 추이</h2></header>
       <div class="sub">물량은 단일 수치가 아니라 밴드다 — 하한은 자체 2차 병합, 상한은 네이버 동일매물묶기.</div>
       <div class="legend" id="trend-legend"></div>
@@ -665,6 +672,132 @@ function tipRows(u) {
   return out;
 }
 
+/* ── 차트 2: 매물 분포 (호가 구간별 히스토그램) ───── */
+function renderHist() {
+  const legend = document.getElementById("hist-legend");
+  legend.replaceChildren();
+  for (const cx of CX_ORDER) {
+    const it = el("div", "item");
+    const d = el("span", "dot"); d.style.background = cxColor(cx);
+    it.append(d, el("span", null, cxName(cx)));
+    legend.append(it);
+  }
+  // 농도는 정체성이 아니라 포함 관계다 — 색을 하나 더 만들지 않고 말로 푼다
+  legend.append(el("div", "item", "연한 막대 = 원시 매물 · 진한 막대 = 물건"));
+
+  const box = document.getElementById("hist-facets");
+  box.replaceChildren();
+  for (const tt of ttList()) {
+    const facet = el("div");
+    if (ttList().length > 1) facet.append(el("div", "facet-title", TT_LABEL[tt]));
+    facet.append(histPlot(tt));
+    box.append(facet);
+  }
+}
+
+// 막대의 데이터 끝만 둥글리고 바닥은 각지게 — 기준선에서 자란다는 뜻이다
+function barPath(x, y, w, h, r) {
+  if (!(h > 0)) return null;
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} `
+       + `L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
+}
+
+const BIN_STEPS = [2500, 5000, 10000, 20000, 25000, 50000, 100000, 200000];  // 만원
+
+function histPlot(tt) {
+  const wrap = el("div", "plot");
+  const units = unitsFor(LATEST, tt).filter(u => u.p != null);
+  if (!units.length) { wrap.append(el("div", "empty", "선택된 물건이 없습니다.")); return wrap; }
+
+  const ps = units.map(u => u.p);
+  const lo = Math.min(...ps), hi = Math.max(...ps);
+  const step = BIN_STEPS.find(v => (hi - lo) / v <= 12) || BIN_STEPS[BIN_STEPS.length - 1];
+  const b0 = Math.floor(lo / step) * step;
+  const nb = Math.max(1, Math.floor((hi - b0) / step) + 1);
+  const cxs = CX_ORDER.filter(cx => units.some(u => u.cx === cx));
+
+  // bins[i][cx] = {arts: 원시 매물 수, units: 물건 수}
+  const bins = Array.from({ length: nb }, () => {
+    const m = {}; for (const cx of cxs) m[cx] = { arts: 0, units: 0 }; return m;
+  });
+  for (const u of units) {
+    const i = Math.min(nb - 1, Math.floor((u.p - b0) / step));
+    bins[i][u.cx].units++;
+    bins[i][u.cx].arts += u.n;
+  }
+
+  const W = Math.max(360, (document.querySelector("main")?.clientWidth || 900) - 38);
+  const H = 268, box = { l: 52, t: 24, w: W - 68, h: H - 64 };
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
+  s.setAttribute("aria-label",
+    `${TT_LABEL[tt]} 호가 구간별 매물 수, 물건 ${units.length}건`);
+
+  const yMax = Math.max(1, ...bins.flatMap(b => cxs.map(cx => b[cx].arts)));
+  // 눈금 상한이 최대값보다 작으면 막대가 플롯 위로 뚫고 나간다 — 눈금 간격에 맞춰 천장을 올린다
+  const base = niceTicks(0, yMax, 4);
+  const yStep = base.length > 1 ? base[1] - base[0] : yMax;
+  const yTop = Math.max(yStep, Math.ceil(yMax / yStep) * yStep);
+  const ticks = [];
+  for (let v = 0; v <= yTop + 1e-9; v += yStep) ticks.push(+v.toFixed(10));
+  const Y = v => box.t + box.h - (v / yTop) * box.h;
+  frame(s, box, ticks, Y, t => String(Math.round(t)));
+  s.append(svgText(box.l - 8, box.t - 11, "건", { anchor: "end" }));
+
+  const slot = box.w / nb;
+  const barW = Math.max(3, Math.min(24, (slot - 8) / cxs.length - 2));
+  const groupW = cxs.length * barW + (cxs.length - 1) * 2;   // 인접 막대 사이 2px 표면 간격
+  const innerW = Math.max(3, Math.round(barW * 0.52));
+
+  const labelEvery = Math.max(1, Math.ceil(nb / Math.max(2, Math.floor(box.w / 58))));
+  for (let i = 0; i < nb; i++) {
+    const gx = box.l + i * slot + (slot - groupW) / 2;
+    cxs.forEach((cx, j) => {
+      const x = gx + j * (barW + 2), c = bins[i][cx];
+      const outer = barPath(x, Y(c.arts), barW, box.t + box.h - Y(c.arts), 4);
+      if (outer) s.append(svg("path", { d: outer, fill: cxColor(cx), opacity: .20 }));
+      const inner = barPath(x + (barW - innerW) / 2, Y(c.units), innerW,
+                            box.t + box.h - Y(c.units), 4);
+      if (inner) s.append(svg("path", { d: inner, fill: cxColor(cx) }));
+    });
+    if (i % labelEvery === 0) {
+      s.append(svgText(box.l + i * slot + slot / 2, box.t + box.h + 18,
+        ((b0 + i * step) / 10000).toFixed(step % 10000 === 0 ? 0 : 1), { tabular: true }));
+    }
+  }
+  s.append(svgText(box.l + box.w + 6, box.t + box.h + 18, "억", { anchor: "start" }));
+
+  // 막대가 곧 히트 타깃이다. 슬롯 전체를 잡아 24px 미만 막대도 놓치지 않는다
+  for (let i = 0; i < nb; i++) {
+    const hit = svg("rect", { x: box.l + i * slot, y: box.t, width: slot, height: box.h,
+      fill: "transparent", style: "cursor:pointer" });
+    hit.addEventListener("pointermove", ev => {
+      showTip(ev.clientX, ev.clientY, () => {
+        const out = [el("div", "v",
+          `${((b0 + i * step) / 10000).toFixed(1)} ~ ${((b0 + (i + 1) * step) / 10000).toFixed(1)}억`)];
+        let tot = 0, tou = 0;
+        for (const cx of cxs) {
+          const c = bins[i][cx];
+          if (!c.arts) continue;
+          tot += c.arts; tou += c.units;
+          const r = el("div", "r");
+          const k = el("span", "k"); k.style.color = cxColor(cx);
+          r.append(k, el("span", null, `${cxName(cx)} 매물 ${c.arts} · 물건 ${c.units}`));
+          out.push(r);
+        }
+        if (!tot) out.push(el("div", "r", "이 구간에는 매물이 없습니다"));
+        else if (cxs.length > 1) out.push(el("div", "d", `합계 매물 ${tot} · 물건 ${tou}`));
+        return out;
+      });
+    });
+    hit.addEventListener("pointerleave", hideTip);
+    s.append(hit);
+  }
+
+  wrap.append(s);
+  return wrap;
+}
+
 /* ── 차트 2: 물량 추이 (밴드) ─────────────────────── */
 function renderTrend() {
   const legend = document.getElementById("trend-legend");
@@ -888,7 +1021,7 @@ function renderTable() {
 /* ── 배선 ─────────────────────────────────────────── */
 function renderAll() {
   renderTree(); renderTiles(); renderIntegrity();
-  renderDots(); renderTrend(); renderTable();
+  renderDots(); renderHist(); renderTrend(); renderTable();
 }
 
 document.getElementById("tt").addEventListener("click", ev => {
@@ -924,7 +1057,7 @@ document.getElementById("meta").textContent =
   (LATEST ? DATA.snapshots[DATA.snapshots.length - 1].at.replace("T", " ").slice(0, 16) : "—");
 
 let rt;
-addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDots(); renderTrend(); }, 140); });
+addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDots(); renderHist(); renderTrend(); }, 140); });
 
 renderAll();
 </script>
