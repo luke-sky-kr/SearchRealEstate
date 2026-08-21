@@ -1,0 +1,932 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>네이버 부동산 매물 모니터</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --ghost: rgba(11,11,11,0.04);
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --delta-up: #006300;
+  --delta-down: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --ghost: rgba(255,255,255,0.06);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --delta-up: #0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --page: #0d0d0d;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255,255,255,0.10);
+  --ghost: rgba(255,255,255,0.06);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --delta-up: #0ca30c;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+h1, h2, h3 { margin: 0; font-weight: 600; }
+h1 { font-size: 17px; }
+h2 { font-size: 15px; }
+h3 { font-size: 13px; color: var(--text-secondary); font-weight: 600; }
+
+header.top {
+  display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  padding: 16px 22px; border-bottom: 1px solid var(--border);
+  background: var(--surface-1); position: sticky; top: 0; z-index: 20;
+}
+header.top .meta { color: var(--muted); font-size: 12px; }
+header.top .spacer { flex: 1 1 auto; }
+
+button, select { font: inherit; color: inherit; }
+.btn {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 7px; padding: 5px 11px; cursor: pointer;
+}
+.btn:hover { background: var(--ghost); }
+
+.layout { display: flex; align-items: flex-start; gap: 18px; padding: 18px 22px 60px; }
+aside.filters {
+  flex: 0 0 292px; position: sticky; top: 70px;
+  max-height: calc(100vh - 92px); overflow-y: auto;
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 11px; padding: 14px;
+}
+main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 11px; padding: 16px 18px;
+}
+.card > header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.card .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+
+/* ── 필터 ─────────────────────────────────────────── */
+.seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button {
+  flex: 1; border: 0; background: transparent; padding: 7px 4px; cursor: pointer;
+  color: var(--text-secondary); font-size: 13px;
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button:hover { background: var(--ghost); }
+.seg button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); font-weight: 600; }
+
+.quick { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 4px; }
+.quick .btn { font-size: 12px; padding: 4px 9px; }
+
+.tree { margin-top: 6px; }
+.tree ul { list-style: none; margin: 0; padding-left: 17px; }
+.tree > ul { padding-left: 0; }
+.node { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
+.node label { display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1; min-width: 0; }
+.node .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .cnt { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.twist {
+  border: 0; background: transparent; cursor: pointer; color: var(--muted);
+  width: 16px; padding: 0; font-size: 10px; line-height: 1; flex: 0 0 16px; text-align: left;
+}
+.twist.leaf { visibility: hidden; }
+.selsum { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+          color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ── 스탯 타일 ─────────────────────────────────────── */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 14px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px; }
+.tile .label { color: var(--text-secondary); font-size: 12px; margin-bottom: 6px; }
+.tile .value { font-size: 25px; font-weight: 600; letter-spacing: -0.01em; }
+.tile.hero { grid-column: span 2; }
+.tile.hero .value { font-size: 48px; line-height: 1.05; white-space: nowrap; }
+.tile .note { color: var(--muted); font-size: 12px; margin-top: 5px; }
+
+/* ── 정합성 ───────────────────────────────────────── */
+.checks { display: flex; flex-direction: column; gap: 7px; }
+.chk { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; font-size: 13px; }
+.chk .badge { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; font-size: 12px; }
+.chk .badge .ic { font-size: 12px; }
+.chk .who { min-width: 168px; }
+.chk .detail { color: var(--muted); font-size: 12px; }
+.st-ok .badge { color: var(--good); }
+.st-wide .badge { color: var(--warning); }
+.st-missing .badge, .st-over .badge { color: var(--critical); }
+.banner {
+  display: flex; gap: 9px; align-items: center; padding: 10px 14px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--ghost); font-size: 13px; margin-bottom: 12px;
+}
+
+/* ── 차트 ─────────────────────────────────────────── */
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
+.legend .item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.legend .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
+.legend .rule { width: 15px; height: 0; border-top: 2px dashed currentColor; opacity: .75; flex: 0 0 15px; }
+.plot { position: relative; }
+.plot svg { display: block; width: 100%; overflow: visible; }
+.facets { display: flex; flex-direction: column; gap: 22px; }
+.facet-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 2px; }
+
+.tip {
+  position: absolute; pointer-events: none; z-index: 30; min-width: 172px; max-width: 280px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px;
+  padding: 9px 11px; box-shadow: 0 6px 22px rgba(0,0,0,.14); font-size: 12px;
+  opacity: 0; transition: opacity .1s;
+}
+.tip.on { opacity: 1; }
+.tip .v { font-size: 15px; font-weight: 600; margin-bottom: 3px; }
+.tip .r { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.tip .k { width: 13px; height: 0; border-top: 2px solid currentColor; flex: 0 0 13px; }
+.tip .d { color: var(--muted); margin-top: 5px; line-height: 1.4; }
+
+/* ── 테이블 ───────────────────────────────────────── */
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 7px 9px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th:first-child, td:first-child, th.l, td.l { text-align: left; }
+thead th { color: var(--text-secondary); font-weight: 600; font-size: 12px; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface-1); }
+thead th:hover { background: var(--ghost); }
+tbody tr:hover { background: var(--ghost); }
+td .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+td.desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border); color: var(--text-secondary); }
+.up { color: var(--delta-up); }
+.down { color: var(--delta-down); }
+.empty { color: var(--muted); padding: 22px 0; text-align: center; }
+
+@media (max-width: 900px) {
+  .layout { flex-direction: column; }
+  aside.filters { position: static; flex: 1 1 auto; width: 100%; max-height: none; }
+}
+</style>
+</head>
+<body>
+<script id="payload" type="application/json">__DASHBOARD_DATA__</script>
+
+<header class="top">
+  <h1>네이버 부동산 매물 모니터</h1>
+  <span class="meta" id="meta"></span>
+  <span class="spacer"></span>
+  <button class="btn" id="theme">테마</button>
+</header>
+
+<div class="layout">
+  <aside class="filters">
+    <h3>거래 유형</h3>
+    <div class="seg" id="tt">
+      <button data-tt="A1" aria-pressed="true">매매</button>
+      <button data-tt="B1" aria-pressed="false">전세</button>
+      <button data-tt="both" aria-pressed="false">둘 다</button>
+    </div>
+
+    <div class="quick">
+      <button class="btn" data-q="30">30평대만</button>
+      <button class="btn" data-q="all">전체 선택</button>
+      <button class="btn" data-q="none">전체 해제</button>
+    </div>
+
+    <h3 style="margin-top:12px">단지 · 동 · 평형 · 층</h3>
+    <div class="tree" id="tree"></div>
+    <div class="selsum" id="selsum"></div>
+  </aside>
+
+  <main>
+    <div class="tiles" id="tiles"></div>
+
+    <section class="card">
+      <header><h2>정합성</h2></header>
+      <div class="sub">수집 누락은 결함이고, 밴드 폭은 데이터 한계다. 둘을 구분해 본다.</div>
+      <div id="integrity"></div>
+    </section>
+
+    <section class="card">
+      <header><h2>호가 분포</h2></header>
+      <div class="sub">점 1개 = 물건 1개(중복 등록을 묶은 단위), 세로축은 그룹 최저 호가. 가로축은 최초 등록일. 파선은 최소제곱 추세선.</div>
+      <div class="legend" id="dot-legend"></div>
+      <div class="facets" id="dot-facets"></div>
+    </section>
+
+    <section class="card">
+      <header><h2>물량 추이</h2></header>
+      <div class="sub">물량은 단일 수치가 아니라 밴드다 — 하한은 자체 2차 병합, 상한은 네이버 동일매물묶기.</div>
+      <div class="legend" id="trend-legend"></div>
+      <div class="facets" id="trend-facets"></div>
+    </section>
+
+    <section class="card">
+      <header><h2>물건 목록</h2></header>
+      <div class="sub">선택한 물건 전부. 열 제목을 눌러 정렬한다. Δ는 직전 스냅샷 대비 호가 변동.</div>
+      <div class="tbl-wrap" id="table"></div>
+    </section>
+  </main>
+</div>
+
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("payload").textContent);
+const NS = "http://www.w3.org/2000/svg";
+const STORE = "naver-monitor-dashboard-v1";
+
+/* ── 색: 단지가 곧 색이다. 필터를 바꿔도 단지 색은 그대로다. ── */
+const CX_ORDER = Object.keys(DATA.complexes).sort(
+  (a, b) => (DATA.complexes[a] || "").localeCompare(DATA.complexes[b], "ko"));
+const SERIES_SLOTS = ["--series-1", "--series-2", "--series-3"];
+const cxColor = cx => {
+  const i = CX_ORDER.indexOf(cx);
+  return `var(${SERIES_SLOTS[i] ?? "--muted"})`;
+};
+const cxName = cx => DATA.complexes[cx] || cx;
+const TT_LABEL = { A1: "매매", B1: "전세", B2: "월세", B3: "단기" };
+
+const LATEST = DATA.snapshots.length ? DATA.snapshots[DATA.snapshots.length - 1].id : null;
+const PREV = DATA.snapshots.length > 1 ? DATA.snapshots[DATA.snapshots.length - 2].id : null;
+
+const eok = v => (v == null ? "—" : (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1) + "억");
+const num = v => (v == null ? "—" : v.toLocaleString("ko-KR"));
+const leafKey = u => [u.cx, u.dong, u.pk, u.fb].join("\u001f");
+
+/* ── 필터 트리 모델 ───────────────────────────────── */
+const LEAVES = new Map();      // leafKey -> {cx,dong,pk,py,fb,n}
+for (const u of DATA.units) {
+  if (u.sid !== LATEST) continue;
+  const k = leafKey(u);
+  if (!LEAVES.has(k)) LEAVES.set(k, { cx: u.cx, dong: u.dong, pk: u.pk, py: u.py, fb: u.fb, n: 0 });
+  LEAVES.get(k).n++;
+}
+
+const FLOOR_ORDER = { "저층": 0, "중층": 1, "고층": 2, "미상": 3 };
+function buildTree() {
+  const root = [];
+  const byCx = new Map();
+  for (const [k, v] of LEAVES) {
+    let cxn = byCx.get(v.cx);
+    if (!cxn) { cxn = { id: "c:" + v.cx, label: cxName(v.cx), cx: v.cx, kids: new Map() }; byCx.set(v.cx, cxn); root.push(cxn); }
+    let dn = cxn.kids.get(v.dong);
+    if (!dn) { dn = { id: cxn.id + "/" + v.dong, label: v.dong + "동", kids: new Map() }; cxn.kids.set(v.dong, dn); }
+    let pn = dn.kids.get(v.pk);
+    if (!pn) { pn = { id: dn.id + "/" + v.pk, label: v.py + "평 (전용 " + v.pk + "㎡)", py: v.py, kids: new Map() }; dn.kids.set(v.pk, pn); }
+    pn.kids.set(v.fb, { id: pn.id + "/" + v.fb, label: v.fb, leaf: k, n: v.n });
+  }
+  const sortKids = (node, cmp) => {
+    node.children = [...node.kids.values()].sort(cmp);
+    delete node.kids;
+    return node.children;
+  };
+  const dongNum = s => { const m = /^\d+/.exec(s.label); return m ? +m[0] : 1e9; };
+  root.sort((a, b) => CX_ORDER.indexOf(a.cx) - CX_ORDER.indexOf(b.cx));
+  for (const c of root) {
+    for (const d of sortKids(c, (a, b) => dongNum(a) - dongNum(b) || a.label.localeCompare(b.label, "ko"))) {
+      for (const p of sortKids(d, (a, b) => a.py - b.py)) {
+        sortKids(p, (a, b) => (FLOOR_ORDER[a.label] ?? 9) - (FLOOR_ORDER[b.label] ?? 9));
+      }
+    }
+  }
+  return root;
+}
+const TREE = buildTree();
+
+function leavesUnder(node) {
+  if (node.leaf) return [node.leaf];
+  return (node.children || []).flatMap(leavesUnder);
+}
+
+/* ── 상태 ─────────────────────────────────────────── */
+const defaultSelection = () => new Set(
+  [...LEAVES].filter(([, v]) => v.py >= 30 && v.py <= 39).map(([k]) => k));
+
+let state = { tt: "A1", selected: defaultSelection(), open: new Set(TREE.map(n => n.id)),
+              sort: { key: "p", dir: -1 } };
+
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE) || "null");
+  if (saved) {
+    if (saved.tt) state.tt = saved.tt;
+    if (Array.isArray(saved.selected)) {
+      const known = saved.selected.filter(k => LEAVES.has(k));
+      if (known.length) state.selected = new Set(known);
+    }
+    if (Array.isArray(saved.open)) state.open = new Set(saved.open);
+  }
+} catch (e) { /* 저장값이 깨졌으면 기본값으로 간다 */ }
+
+const save = () => {
+  try {
+    localStorage.setItem(STORE, JSON.stringify({
+      tt: state.tt, selected: [...state.selected], open: [...state.open] }));
+  } catch (e) { /* 사생활 보호 모드 등 — 저장 실패는 무시 */ }
+};
+
+const ttList = () => (state.tt === "both" ? ["A1", "B1"] : [state.tt]);
+const unitsFor = (sid, tt) => DATA.units.filter(
+  u => u.sid === sid && u.tt === tt && state.selected.has(leafKey(u)));
+
+/* ── DOM 헬퍼 (라벨은 전부 textContent — 데이터는 신뢰하지 않는다) ── */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function svg(tag, attrs) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+}
+function svgText(x, y, str, opts = {}) {
+  const t = svg("text", { x, y, fill: opts.fill || "var(--muted)",
+    "font-size": opts.size || 11, "text-anchor": opts.anchor || "middle",
+    "dominant-baseline": opts.baseline || "auto" });
+  if (opts.tabular) t.setAttribute("style", "font-variant-numeric: tabular-nums");
+  t.textContent = str;
+  return t;
+}
+
+/* ── 필터 트리 렌더 ───────────────────────────────── */
+const treeBox = document.getElementById("tree");
+function nodeState(node) {
+  const ls = leavesUnder(node);
+  const on = ls.filter(k => state.selected.has(k)).length;
+  return on === 0 ? "off" : (on === ls.length ? "on" : "part");
+}
+function renderTree() {
+  treeBox.replaceChildren(renderLevel(TREE));
+  const ls = LEAVES.size ? [...LEAVES.keys()] : [];
+  const selUnits = ttList().reduce((a, tt) => a + unitsFor(LATEST, tt).length, 0);
+  const sum = document.getElementById("selsum");
+  sum.replaceChildren(
+    el("div", null, `선택 ${state.selected.size} / ${ls.length} 그룹`),
+    el("div", null, `해당 물건 ${selUnits}건`));
+}
+function renderLevel(nodes) {
+  const ul = document.createElement("ul");
+  for (const node of nodes) {
+    const li = document.createElement("li");
+    const row = el("div", "node");
+    const hasKids = !!(node.children && node.children.length);
+    const tw = el("button", "twist" + (hasKids ? "" : " leaf"), hasKids ? (state.open.has(node.id) ? "▼" : "▶") : "");
+    tw.setAttribute("aria-label", hasKids ? "펼치기/접기" : "");
+    if (hasKids) tw.onclick = () => {
+      state.open.has(node.id) ? state.open.delete(node.id) : state.open.add(node.id);
+      save(); renderTree();
+    };
+    const lab = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    const st = nodeState(node);
+    cb.checked = st === "on";
+    cb.indeterminate = st === "part";
+    cb.onchange = () => {
+      const ls = leavesUnder(node);
+      if (cb.checked) ls.forEach(k => state.selected.add(k));
+      else ls.forEach(k => state.selected.delete(k));
+      save(); renderAll();
+    };
+    lab.append(cb, el("span", "name", node.label));
+    const cnt = leavesUnder(node).reduce((a, k) => a + (LEAVES.get(k)?.n || 0), 0);
+    lab.append(el("span", "cnt", String(cnt)));
+    row.append(tw, lab);
+    li.append(row);
+    if (hasKids && state.open.has(node.id)) li.append(renderLevel(node.children));
+    ul.append(li);
+  }
+  return ul;
+}
+
+/* ── 스탯 타일 ────────────────────────────────────── */
+function renderTiles() {
+  const box = document.getElementById("tiles");
+  const tts = ttList();
+  let lower = 0, upper = 0, fresh = 0;
+  // "최근 7일"은 보는 날이 아니라 수집한 날 기준이다 — 오래된 대시보드를 열어도 값이 변하지 않는다
+  const asOf = LATEST ? Date.parse(DATA.snapshots[DATA.snapshots.length - 1].at) : Date.now();
+  const cutoff = new Date(asOf - 7 * 864e5).toISOString().slice(0, 10);
+  // 호가 통계는 거래유형별로 낸다 — 매매가와 전세보증금의 중위값은 아무 뜻이 없다
+  const priceBy = new Map();
+  for (const tt of tts) {
+    const us = unitsFor(LATEST, tt);
+    priceBy.set(tt, us.filter(u => u.p != null).map(u => u.p).sort((a, b) => a - b));
+    for (const u of us) {
+      lower++; upper += u.ng;
+      if (u.expo && u.expo >= cutoff) fresh++;
+    }
+  }
+  const median = ps => (ps.length ? ps[Math.floor(ps.length / 2)] : null);
+  const tile = (label, value, note, hero) => {
+    const t = el("div", "tile" + (hero ? " hero" : ""));
+    t.append(el("div", "label", label), el("div", "value", value));
+    if (note) t.append(el("div", "note", note));
+    return t;
+  };
+  const out = [
+    tile("물건 수 (밴드)", lower === upper ? String(lower) : `${lower}–${upper}`,
+         `하한 자체 병합 · 상한 네이버 묶음 — ${tts.map(t => TT_LABEL[t]).join(" + ")}`, true)];
+  for (const tt of tts) {
+    const ps = priceBy.get(tt);
+    out.push(tile(tts.length > 1 ? `중위 호가 (${TT_LABEL[tt]})` : "중위 호가", eok(median(ps)),
+      ps.length ? `최저 ${eok(ps[0])} · 최고 ${eok(ps[ps.length - 1])}` : "—"));
+  }
+  out.push(tile("최근 7일 신규", String(fresh), "최초 등록일 기준"),
+           tile("스냅샷", String(DATA.snapshots.length),
+                LATEST ? DATA.snapshots[DATA.snapshots.length - 1].at.replace("T", " ").slice(0, 16) : "—"));
+  box.replaceChildren(...out);
+}
+
+/* ── 정합성 ───────────────────────────────────────── */
+const ST = { ok: ["✓", "정상", "st-ok"], wide: ["⚠", "밴드 넓음", "st-wide"],
+             missing: ["✕", "수집 누락", "st-missing"], over: ["✕", "로직 오류", "st-over"] };
+function renderIntegrity() {
+  const box = document.getElementById("integrity");
+  const rows = DATA.integrity.filter(r => r.snapshot_id === LATEST);
+  box.replaceChildren();
+  if (!rows.length) { box.append(el("div", "empty", "정합성 결과가 없습니다.")); return; }
+  const bad = rows.filter(r => r.status === "missing" || r.status === "over");
+  if (bad.length) {
+    const b = el("div", "banner");
+    b.append(el("span", null, "✕"),
+      el("span", null, `수집 결함 ${bad.length}건 — 물량 수치를 신뢰하기 전에 수집기를 점검하세요.`));
+    box.append(b);
+  }
+  const list = el("div", "checks");
+  for (const r of rows) {
+    const [ic, label, cls] = ST[r.status] || ST.ok;
+    const row = el("div", "chk " + cls);
+    const badge = el("span", "badge");
+    badge.append(el("span", "ic", ic), el("span", null, label));
+    row.append(el("span", "who", `${cxName(r.complex_no)} ${TT_LABEL[r.trade_type] || r.trade_type}`),
+               badge, el("span", "detail", r.detail || ""));
+    list.append(row);
+  }
+  box.append(list);
+}
+
+/* ── 공통 축 그리기 ───────────────────────────────── */
+function niceTicks(min, max, count) {
+  if (!(max > min)) { const c = min || 0; return [c - 1, c, c + 1]; }
+  const raw = (max - min) / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || mag * 10;
+  const out = [];
+  for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function dayTicks(x0, x1, count) {
+  // 눈금을 자정에 맞춘다 — 라벨이 날짜인데 눈금이 한낮이면 그림이 거짓말을 한다
+  const DAY = 864e5;
+  const span = (x1 - x0) / DAY;
+  const step = [1, 2, 3, 7, 14, 28, 56, 91, 182, 365].find(s => span / s <= count) || 365;
+  const start = new Date(x0); start.setHours(0, 0, 0, 0);
+  const out = [];
+  for (let t = start.getTime(); t <= x1; t += step * DAY) if (t >= x0) out.push(t);
+  return out;
+}
+function frame(g, box, yTicks, yScale, fmtY) {
+  for (const t of yTicks) {
+    const y = yScale(t);
+    g.append(svg("line", { x1: box.l, x2: box.l + box.w, y1: y, y2: y,
+                           stroke: "var(--grid)", "stroke-width": 1 }));
+    g.append(svgText(box.l - 8, y + 4, fmtY(t), { anchor: "end", tabular: true }));
+  }
+  g.append(svg("line", { x1: box.l, x2: box.l + box.w, y1: box.t + box.h, y2: box.t + box.h,
+                         stroke: "var(--axis)", "stroke-width": 1 }));
+}
+
+/* ── 툴팁 ─────────────────────────────────────────── */
+const tipEl = document.getElementById("tip");
+function showTip(clientX, clientY, build) {
+  tipEl.replaceChildren(...build());
+  tipEl.classList.add("on");
+  const r = tipEl.getBoundingClientRect();
+  let x = clientX + 14, y = clientY - r.height - 12;
+  if (x + r.width > innerWidth - 8) x = clientX - r.width - 14;
+  if (y < 8) y = clientY + 16;
+  tipEl.style.left = (x + scrollX) + "px";
+  tipEl.style.top = (y + scrollY) + "px";
+}
+const hideTip = () => tipEl.classList.remove("on");
+
+/* ── 차트 1: 호가 dot plot ────────────────────────── */
+function renderDots() {
+  const legend = document.getElementById("dot-legend");
+  legend.replaceChildren();
+  for (const cx of CX_ORDER) {
+    const it = el("div", "item");
+    const d = el("span", "dot"); d.style.background = cxColor(cx);
+    it.append(d, el("span", null, cxName(cx)));
+    legend.append(it);
+  }
+  const tr = el("div", "item");
+  const rule = el("span", "rule"); rule.style.color = "var(--muted)";
+  tr.append(rule, el("span", null, "추세선 (최소제곱)"));
+  legend.append(tr);
+
+  const box = document.getElementById("dot-facets");
+  box.replaceChildren();
+  for (const tt of ttList()) {
+    const facet = el("div");
+    if (ttList().length > 1) facet.append(el("div", "facet-title", TT_LABEL[tt]));
+    facet.append(dotPlot(unitsFor(LATEST, tt), tt));
+    box.append(facet);
+  }
+}
+
+function dotPlot(units, tt) {
+  const wrap = el("div", "plot");
+  if (!units.length) { wrap.append(el("div", "empty", "선택된 물건이 없습니다.")); return wrap; }
+  const W = Math.max(360, (document.querySelector("main")?.clientWidth || 900) - 38);
+  const H = 312, box = { l: 58, t: 24, w: W - 74, h: H - 64 };
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
+  s.setAttribute("aria-label", `${TT_LABEL[tt]} 호가 분포, 물건 ${units.length}건`);
+
+  const dayOf = u => (u.expo ? Date.parse(u.expo) : null);
+  const pts = units.filter(u => dayOf(u) != null && u.p != null);
+  if (!pts.length) { wrap.append(el("div", "empty", "등록일 정보가 있는 물건이 없습니다.")); return wrap; }
+  const xs = pts.map(dayOf), ys = pts.map(u => u.p);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs);
+  if (x0 === x1) { x0 -= 864e5; x1 += 864e5; }
+  const pad = (Math.max(...ys) - Math.min(...ys)) * 0.08 || 1;
+  const y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
+  const X = v => box.l + (v - x0) / (x1 - x0) * box.w;
+  const Y = v => box.t + box.h - (v - y0) / (y1 - y0) * box.h;
+
+  frame(s, box, niceTicks(y0, y1, 5), Y, t => (t / 10000).toFixed(1));
+  s.append(svgText(box.l - 8, box.t - 11, "억", { anchor: "end" }));
+
+  for (const t of dayTicks(x0, x1, Math.min(7, Math.max(2, Math.round(box.w / 105))))) {
+    const d = new Date(t);
+    s.append(svgText(X(t), box.t + box.h + 18,
+      `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, "0")}`, { tabular: true }));
+  }
+
+  // 단지별 추세선 — 파선은 "관측이 아니라 적합"이라는 뜻이다
+  for (const cx of CX_ORDER) {
+    const g = pts.filter(u => u.cx === cx);
+    if (g.length < 3) continue;
+    const n = g.length;
+    const mx = g.reduce((a, u) => a + dayOf(u), 0) / n;
+    const my = g.reduce((a, u) => a + u.p, 0) / n;
+    let sxy = 0, sxx = 0;
+    for (const u of g) { const dx = dayOf(u) - mx; sxy += dx * (u.p - my); sxx += dx * dx; }
+    if (!sxx) continue;
+    const b = sxy / sxx, a = my - b * mx;
+    const clamp = v => Math.max(y0, Math.min(y1, v));
+    s.append(svg("line", { x1: X(x0), y1: Y(clamp(a + b * x0)), x2: X(x1), y2: Y(clamp(a + b * x1)),
+      stroke: cxColor(cx), "stroke-width": 2, "stroke-dasharray": "5 5",
+      "stroke-linecap": "round", opacity: .75 }));
+  }
+
+  // 점: 2px 표면 링으로 겹침을 분리한다 (테두리가 아니라 여백)
+  const hit = [];
+  for (const u of pts) {
+    const cxp = X(dayOf(u)), cyp = Y(u.p);
+    s.append(svg("circle", { cx: cxp, cy: cyp, r: 4.5, fill: cxColor(u.cx),
+      stroke: "var(--surface-1)", "stroke-width": 2, opacity: .92 }));
+    hit.push({ x: cxp, y: cyp, u });
+  }
+
+  const focus = svg("circle", { r: 8, fill: "none", stroke: "var(--text-primary)",
+    "stroke-width": 2, opacity: 0 });
+  s.append(focus);
+  const overlay = svg("rect", { x: box.l, y: box.t, width: box.w, height: box.h,
+    fill: "transparent", style: "cursor:crosshair" });
+  s.append(overlay);
+
+  // 밀집 산점도는 "가장 가까운 점"으로 잡는다 — 4.5px 점을 정조준시키지 않는다
+  const scale = () => W / s.getBoundingClientRect().width;
+  overlay.addEventListener("pointermove", ev => {
+    const r = s.getBoundingClientRect(), k = scale();
+    const px = (ev.clientX - r.left) * k, py = (ev.clientY - r.top) * k;
+    let best = null, bd = Infinity;
+    for (const h of hit) {
+      const d = (h.x - px) ** 2 + (h.y - py) ** 2;
+      if (d < bd) { bd = d; best = h; }
+    }
+    if (!best || Math.sqrt(bd) > 34 * k) { focus.setAttribute("opacity", 0); hideTip(); return; }
+    focus.setAttribute("cx", best.x); focus.setAttribute("cy", best.y);
+    focus.setAttribute("opacity", .9);
+    showTip(ev.clientX, ev.clientY, () => tipRows(best.u));
+  });
+  overlay.addEventListener("pointerleave", () => { focus.setAttribute("opacity", 0); hideTip(); });
+
+  wrap.append(s);
+  return wrap;
+}
+
+function tipRows(u) {
+  const out = [];
+  out.push(el("div", "v", eok(u.p) + (u.pmin !== u.pmax ? `  (${eok(u.pmin)}~${eok(u.pmax)})` : "")));
+  const r = el("div", "r");
+  const k = el("span", "k"); k.style.color = cxColor(u.cx);
+  r.append(k, el("span", null, `${cxName(u.cx)} ${u.dong}동 · ${u.py}평 · ${u.fi || u.fb}`));
+  out.push(r);
+  out.push(el("div", "r", `${TT_LABEL[u.tt]} · ${u.dir || "방향 미상"} · 등록 ${u.expo || "—"}`));
+  out.push(el("div", "r", `매물 ${u.n}건 · 중개사 ${u.rt.length}곳 · 네이버 묶음 ${u.ng}`));
+  if (u.d) out.push(el("div", "d", u.d));
+  return out;
+}
+
+/* ── 차트 2: 물량 추이 (밴드) ─────────────────────── */
+function renderTrend() {
+  const legend = document.getElementById("trend-legend");
+  legend.replaceChildren();
+  const box = document.getElementById("trend-facets");
+  box.replaceChildren();
+
+  if (DATA.snapshots.length < 2) {
+    // 점 하나짜리 선 그래프는 차트가 아니라 숫자다 — 숫자로 보여준다
+    const grid = el("div", "tiles");
+    for (const tt of ttList()) for (const cx of CX_ORDER) {
+      const us = unitsFor(LATEST, tt).filter(u => u.cx === cx);
+      if (!us.length) continue;
+      const lo = us.length, hi = us.reduce((a, u) => a + u.ng, 0);
+      const t = el("div", "tile");
+      t.append(el("div", "label", `${cxName(cx)} ${TT_LABEL[tt]}`),
+               el("div", "value", lo === hi ? String(lo) : `${lo}–${hi}`),
+               el("div", "note", "하한–상한"));
+      const bar = el("div"); bar.style.cssText = `height:3px;margin-top:9px;border-radius:2px;background:${cxColor(cx)}`;
+      t.append(bar);
+      grid.append(t);
+    }
+    box.append(grid);
+    box.append(el("div", "empty", "스냅샷이 1개라 추이를 그릴 수 없습니다. 다음 수집 후 표시됩니다."));
+    return;
+  }
+
+  for (const cx of CX_ORDER) {
+    const it = el("div", "item");
+    const d = el("span", "dot"); d.style.background = cxColor(cx);
+    it.append(d, el("span", null, cxName(cx) + " (하한~상한 밴드)"));
+    legend.append(it);
+  }
+  for (const tt of ttList()) {
+    const facet = el("div");
+    if (ttList().length > 1) facet.append(el("div", "facet-title", TT_LABEL[tt]));
+    facet.append(trendPlot(tt));
+    box.append(facet);
+  }
+}
+
+function trendPlot(tt) {
+  const wrap = el("div", "plot");
+  const W = Math.max(360, (document.querySelector("main")?.clientWidth || 900) - 38);
+  const H = 292, box = { l: 52, t: 24, w: W - 68, h: H - 64 };
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
+  s.setAttribute("aria-label", `${TT_LABEL[tt]} 물량 추이`);
+
+  const series = CX_ORDER.map(cx => ({
+    cx, pts: DATA.snapshots.map(sn => {
+      const us = DATA.units.filter(u => u.sid === sn.id && u.tt === tt && u.cx === cx
+                                        && state.selected.has(leafKey(u)));
+      return { sid: sn.id, at: sn.at, lo: us.length, hi: us.reduce((a, u) => a + u.ng, 0) };
+    })
+  })).filter(g => g.pts.some(p => p.hi > 0));
+
+  if (!series.length) { wrap.append(el("div", "empty", "선택된 물건이 없습니다.")); return wrap; }
+
+  const all = series.flatMap(g => g.pts.flatMap(p => [p.lo, p.hi]));
+  const y1 = Math.max(...all) * 1.1 || 1, y0 = 0;
+  const n = DATA.snapshots.length;
+  const X = i => box.l + (n === 1 ? box.w / 2 : (i / (n - 1)) * box.w);
+  const Y = v => box.t + box.h - (v - y0) / (y1 - y0) * box.h;
+
+  frame(s, box, niceTicks(y0, y1, 4), Y, t => String(Math.round(t)));
+  s.append(svgText(box.l - 8, box.t - 11, "건", { anchor: "end" }));
+  DATA.snapshots.forEach((sn, i) => {
+    if (n > 8 && i % Math.ceil(n / 8) !== 0 && i !== n - 1) return;
+    s.append(svgText(X(i), box.t + box.h + 18, sn.at.slice(5, 10), { tabular: true }));
+  });
+
+  for (const g of series) {
+    const col = cxColor(g.cx);
+    const up = g.pts.map((p, i) => `${X(i)},${Y(p.hi)}`);
+    const dn = g.pts.map((p, i) => `${X(i)},${Y(p.lo)}`).reverse();
+    s.append(svg("polygon", { points: [...up, ...dn].join(" "), fill: col, opacity: .10 }));
+    for (const key of ["hi", "lo"]) {
+      s.append(svg("polyline", { points: g.pts.map((p, i) => `${X(i)},${Y(p[key])}`).join(" "),
+        fill: "none", stroke: col, "stroke-width": 2,
+        "stroke-linejoin": "round", "stroke-linecap": "round", opacity: key === "hi" ? .55 : 1 }));
+    }
+    const last = g.pts[g.pts.length - 1];
+    s.append(svg("circle", { cx: X(n - 1), cy: Y(last.lo), r: 4.5, fill: col,
+      stroke: "var(--surface-1)", "stroke-width": 2 }));
+    s.append(svgText(X(n - 1) + 9, Y(last.lo) + 4, `${last.lo}–${last.hi}`,
+      { anchor: "start", fill: "var(--text-secondary)", tabular: true }));
+  }
+
+  // 세로 크로스헤어 — 독자는 2px 선이 아니라 날짜를 겨눈다
+  const cross = svg("line", { y1: box.t, y2: box.t + box.h, stroke: "var(--axis)",
+    "stroke-width": 1, opacity: 0 });
+  s.append(cross);
+  const overlay = svg("rect", { x: box.l, y: box.t, width: box.w, height: box.h, fill: "transparent" });
+  s.append(overlay);
+  overlay.addEventListener("pointermove", ev => {
+    const r = s.getBoundingClientRect(), k = W / r.width;
+    const px = (ev.clientX - r.left) * k;
+    let i = 0, bd = Infinity;
+    for (let j = 0; j < n; j++) { const d = Math.abs(X(j) - px); if (d < bd) { bd = d; i = j; } }
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("opacity", .8);
+    showTip(ev.clientX, ev.clientY, () => {
+      const out = [el("div", "v", DATA.snapshots[i].at.replace("T", " ").slice(0, 16))];
+      for (const g of series) {
+        const p = g.pts[i], row = el("div", "r");
+        const k2 = el("span", "k"); k2.style.color = cxColor(g.cx);
+        row.append(k2, el("span", null, `${cxName(g.cx)} ${p.lo}–${p.hi}건`));
+        out.push(row);
+      }
+      return out;
+    });
+  });
+  overlay.addEventListener("pointerleave", () => { cross.setAttribute("opacity", 0); hideTip(); });
+
+  wrap.append(s);
+  return wrap;
+}
+
+/* ── 스냅샷 간 물건 매칭 (Δ호가 · 신규 · 소멸) ────── */
+function matchPrev(tt) {
+  const cur = unitsFor(LATEST, tt);
+  if (PREV == null) return { delta: new Map(), gone: [] };
+  const prev = DATA.units.filter(u => u.sid === PREV && u.tt === tt && state.selected.has(leafKey(u)));
+  const byArt = new Map();
+  for (const p of prev) for (const a of p.arts) byArt.set(a, p);
+  const byKey = new Map();
+  for (const p of prev) byKey.set(leafKey(p) + "\u001f" + p.dir + "\u001f" + p.fi, p);
+  const delta = new Map(), used = new Set();
+  for (const u of cur) {
+    // 매물번호가 하나라도 겹치면 같은 물건으로 본다. 없으면 물건 키로 떨어진다.
+    let m = u.arts.map(a => byArt.get(a)).find(Boolean)
+         || byKey.get(leafKey(u) + "\u001f" + u.dir + "\u001f" + u.fi);
+    if (m) { used.add(m.gk); delta.set(u.gk, u.p - m.p); }
+  }
+  return { delta, gone: prev.filter(p => !used.has(p.gk)) };
+}
+
+/* ── 물건 테이블 (차트의 표 대응물이기도 하다) ────── */
+const COLS = [
+  { k: "cx", t: "단지", l: true, v: u => cxName(u.cx) },
+  { k: "dong", t: "동", l: true, v: u => u.dong + "동" },
+  { k: "tt", t: "유형", l: true, v: u => TT_LABEL[u.tt] || u.tt },
+  { k: "py", t: "평형", v: u => u.py + "평" },
+  { k: "fi", t: "층", l: true, v: u => u.fi || u.fb },
+  { k: "dir", t: "방향", l: true, v: u => u.dir || "—" },
+  { k: "p", t: "호가", v: u => eok(u.p) },
+  { k: "spread", t: "묶음 범위", v: u => (u.pmin === u.pmax ? "—" : `${eok(u.pmin)}~${eok(u.pmax)}`) },
+  { k: "n", t: "매물", v: u => String(u.n) },
+  { k: "rt", t: "중개사", v: u => String(u.rt.length) },
+  { k: "expo", t: "등록일", v: u => u.expo || "—" },
+  { k: "delta", t: "Δ", v: null },
+  { k: "d", t: "설명", l: true, v: u => u.d, cls: "desc" },
+];
+
+function renderTable() {
+  const host = document.getElementById("table");
+  const tts = ttList();
+  const rows = [];
+  let gone = [];
+  for (const tt of tts) {
+    const { delta, gone: g } = matchPrev(tt);
+    gone = gone.concat(g);
+    for (const u of unitsFor(LATEST, tt)) rows.push({ u, d: delta.get(u.gk) });
+  }
+  if (!rows.length) { host.replaceChildren(el("div", "empty", "선택된 물건이 없습니다.")); return; }
+
+  const { key, dir } = state.sort;
+  const pick = r => (key === "delta" ? (r.d ?? -Infinity)
+    : key === "cx" ? cxName(r.u.cx)
+    : key === "tt" ? (TT_LABEL[r.u.tt] || r.u.tt)
+    : key === "dong" ? (parseInt(r.u.dong, 10) || 1e9)
+    : key === "rt" ? r.u.rt.length : key === "spread" ? (r.u.pmax - r.u.pmin) : r.u[key]);
+  rows.sort((a, b) => {
+    const x = pick(a), y = pick(b);
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "ko")) * dir;
+  });
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead"), htr = document.createElement("tr");
+  for (const c of COLS) {
+    const th = el("th", c.l ? "l" : null, c.t + (key === c.k ? (dir > 0 ? " ▲" : " ▼") : ""));
+    th.onclick = () => {
+      state.sort = { key: c.k, dir: key === c.k ? -dir : (c.k === "p" || c.k === "delta" ? -1 : 1) };
+      renderTable();
+    };
+    htr.append(th);
+  }
+  thead.append(htr);
+  const tbody = document.createElement("tbody");
+  for (const { u, d } of rows) {
+    const tr = document.createElement("tr");
+    for (const c of COLS) {
+      const td = el("td", [c.l ? "l" : "", c.cls || ""].join(" ").trim() || null);
+      if (c.k === "cx") {
+        const sw = el("span", "swatch"); sw.style.background = cxColor(u.cx);
+        td.append(sw, document.createTextNode(cxName(u.cx)));
+      } else if (c.k === "delta") {
+        if (d == null) td.append(el("span", "tag", PREV == null ? "—" : "신규"));
+        else if (d === 0) td.textContent = "0";
+        else {
+          const sp = el("span", d > 0 ? "up" : "down", (d > 0 ? "+" : "") + (d / 10000).toFixed(1) + "억");
+          td.append(sp);
+        }
+      } else td.textContent = c.v(u);
+      if (c.k === "d" && u.d) td.title = u.d;
+      tr.append(td);
+    }
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  host.replaceChildren(table);
+
+  if (gone.length) {
+    const note = el("div", "sub", `직전 스냅샷 대비 사라진 물건 ${gone.length}건`);
+    note.style.marginTop = "10px";
+    host.append(note);
+  }
+}
+
+/* ── 배선 ─────────────────────────────────────────── */
+function renderAll() {
+  renderTree(); renderTiles(); renderIntegrity();
+  renderDots(); renderTrend(); renderTable();
+}
+
+document.getElementById("tt").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-tt]");
+  if (!b) return;
+  state.tt = b.dataset.tt;
+  for (const x of document.querySelectorAll("#tt button"))
+    x.setAttribute("aria-pressed", String(x === b));
+  save(); renderAll();
+});
+for (const x of document.querySelectorAll("#tt button"))
+  x.setAttribute("aria-pressed", String(x.dataset.tt === state.tt));
+
+document.querySelector(".quick").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-q]");
+  if (!b) return;
+  if (b.dataset.q === "30") state.selected = defaultSelection();
+  else if (b.dataset.q === "all") state.selected = new Set(LEAVES.keys());
+  else state.selected = new Set();
+  save(); renderAll();
+});
+
+document.getElementById("theme").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : (cur === "light" ? null : "dark");
+  if (next) document.documentElement.setAttribute("data-theme", next);
+  else document.documentElement.removeAttribute("data-theme");
+  renderAll();
+};
+
+document.getElementById("meta").textContent =
+  `${DATA.snapshots.length}개 스냅샷 · 최종 수집 ` +
+  (LATEST ? DATA.snapshots[DATA.snapshots.length - 1].at.replace("T", " ").slice(0, 16) : "—");
+
+let rt;
+addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDots(); renderTrend(); }, 140); });
+
+renderAll();
+</script>
+</body>
+</html>

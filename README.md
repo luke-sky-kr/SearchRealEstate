@@ -26,7 +26,21 @@ python3 scripts/dedup.py apply <snapshot_id> data/verdicts_<snapshot_id>.json
 
 # 6) 정합성 진단
 python3 scripts/integrity.py <snapshot_id> naver_data/<수집시각>/counts.json
+
+# 7) 대시보드 생성 (dashboard/index.html — 브라우저로 열면 끝)
+python3 scripts/build_dashboard.py
 ```
+
+## 대시보드
+
+`dashboard/template.html`이 앱이고, `build_dashboard.py`가 DB에서 뽑은 JSON을 끼워
+`dashboard/index.html` 한 장으로 굽는다. 외부 CDN에 의존하지 않으므로 파일만 열면 동작한다.
+
+- 좌측 **단지 ▸ 동 ▸ 평형 ▸ 층** 체크박스 트리와 매매/전세 토글이 아래 모든 차트·표를 함께 좁힌다. 선택은 localStorage에 남는다.
+- **호가 분포** — 점 1개 = 물건 1개, y=그룹 최저 호가, x=최초 등록일, 단지별 최소제곱 추세선.
+- **물량 추이** — 하한~상한 밴드. 스냅샷이 1개면 선 대신 숫자로 보여준다.
+- **물건 목록** — 정렬 가능한 표이자 차트의 표 대응물. 스냅샷이 2개 이상이면 Δ호가와 신규/소멸이 채워진다.
+- 색은 단지를 따라간다(필터를 바꿔도 단지 색은 그대로). 라이트/다크 모두 대응.
 
 ## 물량은 밴드로 읽는다
 
@@ -50,7 +64,7 @@ python3 scripts/integrity.py <snapshot_id> naver_data/<수집시각>/counts.json
 | DB 스키마 / 적재 (`ingest.py`) | 완료 · 실데이터 검증됨 |
 | Dedup (규칙 + AI 2단계) | 규칙 완료 · AI 판정 자동화 미착수 |
 | 정합성 감시 (`integrity.py`) | 완료 |
-| 대시보드 | 미착수 (계획서 §9) |
+| 대시보드 v1 (`build_dashboard.py`) | 완료 |
 | run_all 오케스트레이터 | 미착수 |
 
-M1(첫 스냅샷 E2E) 완료. 다음은 M2(대시보드 v1) — `DEVELOPMENT_PLAN.md` §12 참조.
+M1(첫 스냅샷 E2E)과 M2(대시보드 v1) 완료. 다음은 M3(AI dedup 자동화 + run_all) — `DEVELOPMENT_PLAN.md` §12 참조.

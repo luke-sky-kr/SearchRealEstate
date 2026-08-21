@@ -47,6 +47,8 @@ scripts/schema.sql        DB 스키마
 scripts/ingest.py         JSON → SQLite 적재 (대표매물 + 묶음 멤버를 모두 펼쳐 넣음)
 scripts/dedup.py          네이버 묶음 위의 보수적 2차 병합 + 애매 쌍 추출 / AI verdicts 반영(apply)
 scripts/integrity.py      누락(missing) 감시 + 물량 밴드 폭(wide) 감시
+scripts/build_dashboard.py  DB → JSON → dashboard/index.html 한 장으로 굽기
+dashboard/template.html   대시보드 앱 본체 (여기를 고친다. index.html은 생성물)
 data/monitor.db           SQLite
 ```
 
@@ -65,11 +67,14 @@ data/monitor.db           SQLite
 - **방향(`direction`)은 dedup의 1차 분할자다.** 한 세대가 두 방향일 수 없으므로 불일치는 즉시 배제한다. 층이 대역으로만 주어지는 상황에서 가장 신뢰할 수 있는 신호다.
 - `dedup.py`의 임계값(병합 3.5 / 애매 하한 1.5)은 첫 스냅샷 기준이다. 애매 쌍(`data/ambiguous_<sid>.json`)을 검수하며 조정할 것.
 - 애매 쌍 판정 힌트: **같은 중개사가 가격만 다르게 올린 두 건은 대체로 별개 세대**다(한 중개사가 같은 집을 두 가격에 올릴 이유가 없다). 반대로 다른 중개사 + 동일 가격 + 동일 설명 토큰은 중복 가능성이 높다.
-- 대시보드는 미착수. 사용자 요구의 핵심은 **단지·동·평형·층 체크박스로 고른 물건만의 추이**를 보는 것이다.
+- 대시보드를 고칠 때는 `dashboard/template.html`을 고치고 `build_dashboard.py`로 다시 굽는다. `index.html`은 생성물이라 직접 고치면 다음 빌드에 날아간다.
+- 대시보드 색은 **단지**를 따라간다. 필터를 바꿔도 단지 색이 바뀌지 않아야 한다. 거래유형은 색이 아니라 facet(별도 플롯)으로 나눈다 — 매매가와 전세보증금은 섞어서 통계를 내면 안 된다.
+- 평형 버킷은 전용면적을 2㎡ 간격 단일연결로 군집화해 만든다. 단순 반올림은 같은 34평형을 34평/35평으로 쪼갠다.
 
 ## 지금 할 일
 
-M2 — 대시보드 v1. M1(첫 스냅샷 E2E)은 2026-08-22 완료: 4개 조합 모두 누락 0, 물량 밴드 592~716건.
+M3 — AI dedup 자동화 + `run_all.py` 원커맨드화. 애매 쌍은 `data/ambiguous_<sid>.json`에 있다.
+M1(첫 스냅샷 E2E)과 M2(대시보드 v1)는 2026-08-22 완료: 4개 조합 모두 누락 0, 물량 밴드 592~716건.
 
 ## 사용자 선호
 
