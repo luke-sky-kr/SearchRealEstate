@@ -9,32 +9,59 @@
        - complexes.json (단지번호-이름 매핑)
 
 새 단지 추가: 아래 COMPLEXES 에 이름만 추가하면 자동으로 번호를 찾습니다.
-자동 검색이 실패하면 {"이름": "단지번호"} 형태로 번호를 직접 적으세요.
+자동 검색이 실패하면 {"이름": 12345} 형태로 번호를 직접 적으세요.
+
+── API 메모 (2026-08-22 실측) ────────────────────────────────────────
+구 m.land.naver.com API(getComplexArticleList)는 폐기되었다. null을 반환하며
+m.land 경로는 fin.land.naver.com(네이버파이낸셜)으로 리다이렉트된다.
+
+현행 엔드포인트:
+  POST https://fin.land.naver.com/front-api/v1/complex/article/list
+  body: {complexNumber, tradeTypes:["A1"], size:<=30, userChannelType:"PC",
+         articleSortType:"PRICE_ASC", seed, lastInfo}
+  응답: {result: {totalCount, hasNextPage, lastInfo, seed, list:[...]}}
+
+- 쿠키 없이 호출하면 429(TOO_MANY_REQUESTS). 먼저 페이지를 한 번 GET 해서
+  세션 쿠키를 받아야 한다.
+- 페이지네이션은 페이지 번호가 아니라 커서(lastInfo)다. 첫 응답의 seed를
+  이후 요청에 그대로 실어야 목록이 흔들리지 않는다.
+- 응답의 각 항목은 대표매물(representativeArticleInfo) + 네이버가 묶은
+  중복매물(duplicatedArticleInfo.articleInfoList) 구조다. totalCount는
+  대표매물 기준 개수이므로, 원시 매물 수는 그보다 많다.
 """
-import json, os, re, sys, time, urllib.request, urllib.parse
+import json, os, re, sys, time, urllib.request, urllib.parse, urllib.error
+import http.cookiejar
 from datetime import datetime
 
 # ── 설정 ──────────────────────────────────────────────────────────
 COMPLEXES = {
-    "래미안신반포팰리스": None,   # None = 자동 검색, 또는 "12345" 처럼 직접 지정
+    "래미안신반포팰리스": 108228,  # None = 자동 검색, 또는 108228 처럼 직접 지정
     "래미안퍼스티지": None,
 }
-TRADE_TYPES = ["A1", "B1"]      # A1=매매, B1=전세
+TRADE_TYPES = ["A1", "B1"]      # A1=매매, B1=전세 (B2=월세, B3=단기)
 DELAY_SEC = 0.8                 # 요청 간격 (서버 부담 방지)
+PAGE_SIZE = 30                  # API 최대값
 # ──────────────────────────────────────────────────────────────────
 
-UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
-      "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1")
+API = "https://fin.land.naver.com/front-api/v1"
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
 
-def http_get(url, referer="https://m.land.naver.com/", follow_redirect=True):
-    req = urllib.request.Request(url, headers={
-        "User-Agent": UA, "Referer": referer,
-        "Accept": "application/json, text/html;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ko-KR,ko;q=0.9",
-    })
+_opener = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+
+def _headers(referer):
+    return {"User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9",
+            "Accept": "application/json, text/plain, */*", "Referer": referer}
+
+
+def http_get(url, referer="https://fin.land.naver.com/", follow_redirect=True):
+    req = urllib.request.Request(url, headers=_headers(referer))
     if follow_redirect:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with _opener.open(req, timeout=20) as r:
             return r.status, r.geturl(), r.read().decode("utf-8", "replace")
+
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **k): return None
     opener = urllib.request.build_opener(NoRedirect)
@@ -46,74 +73,118 @@ def http_get(url, referer="https://m.land.naver.com/", follow_redirect=True):
             return e.code, e.headers.get("Location", ""), ""
         raise
 
+
+def api_post(path, body, referer):
+    req = urllib.request.Request(
+        API + path, data=json.dumps(body).encode(), method="POST",
+        headers={**_headers(referer), "Content-Type": "application/json",
+                 "Origin": "https://fin.land.naver.com"})
+    try:
+        with _opener.open(req, timeout=20) as r:
+            raw = r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        if e.code == 429:
+            raise RuntimeError(
+                "429 TOO_MANY_REQUESTS — 네이버가 요청을 제한하고 있습니다. "
+                "몇 분 기다렸다 다시 실행하세요.") from None
+        raise RuntimeError(f"HTTP {e.code} {path}: {raw[:200]}") from None
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"JSON 파싱 실패 (차단 가능성): {path}\n{raw[:300]}")
+    if not d.get("isSuccess", True):
+        raise RuntimeError(f"API 오류 {d.get('detailCode')}: {d.get('message')}")
+    return d
+
+
+def open_session():
+    """세션 쿠키 획득. 이걸 건너뛰면 API가 429를 돌려준다."""
+    http_get("https://fin.land.naver.com/")
+
+
 def resolve_complex_no(name):
-    """단지명 -> 네이버 단지번호(hscpNo). m.land 검색 리다이렉트/본문에서 추출."""
+    """단지명 -> 네이버 단지번호. m.land 검색이 fin.land로 리다이렉트되는 것을 이용."""
     url = "https://m.land.naver.com/search/result/" + urllib.parse.quote(name)
     code, loc, body = http_get(url, follow_redirect=False)
     for target in (loc or "", body or ""):
-        m = re.search(r"/complex/info/(\d+)", target)
+        m = re.search(r"/complex(?:es|/info)/(\d+)", target)
         if m:
-            return m.group(1)
-    # 리다이렉트가 아니면 본문에서 hscpNo 패턴 탐색
-    code, _, body = http_get(url)
-    m = re.search(r"/complex/info/(\d+)", body) or re.search(r'hscpNo["\']?[:=]["\']?(\d+)', body)
+            return int(m.group(1))
+    code, final_url, body = http_get(url)
+    m = (re.search(r"/complex(?:es|/info)/(\d+)", final_url)
+         or re.search(r"/complex(?:es|/info)/(\d+)", body)
+         or re.search(r'complexNumber["\']?\s*[:=]\s*["\']?(\d+)', body))
     if m:
-        return m.group(1)
+        return int(m.group(1))
     raise RuntimeError(f"단지번호 자동검색 실패: {name} — COMPLEXES에 번호를 직접 지정하세요")
 
-def fetch_articles(hscp_no, trade_type):
-    """전 페이지 순회 수집. (매물 리스트, 네이버 총 매물 수) 반환."""
-    items, page, tot_cnt = [], 1, None
-    referer = f"https://m.land.naver.com/complex/info/{hscp_no}"
+
+def fetch_articles(complex_no, trade_type):
+    """커서 페이지네이션으로 전 매물 수집. (항목 리스트, 네이버 표시 총 수) 반환."""
+    items, seed, last_info, total = [], None, None, None
+    referer = f"https://fin.land.naver.com/complexes/{complex_no}"
+    page = 0
     while True:
-        url = ("https://m.land.naver.com/complex/getComplexArticleList"
-               f"?hscpNo={hscp_no}&tradTpCd={trade_type}&order=point_&showR0=N&page={page}")
-        code, _, body = http_get(url, referer=referer)
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError:
-            raise RuntimeError(f"JSON 파싱 실패 (차단 가능성): {url}\n{body[:300]}")
-        result = data.get("result") or {}
-        lst = result.get("list") or []
-        if tot_cnt is None:
-            tot_cnt = result.get("totAtclCnt") or result.get("totCnt")
-        items.extend(lst)
-        more = result.get("moreDataYn")
-        print(f"    page {page}: +{len(lst)} (누적 {len(items)})")
-        if more != "Y" or not lst:
-            break
         page += 1
+        body = {"complexNumber": complex_no, "tradeTypes": [trade_type],
+                "size": PAGE_SIZE, "userChannelType": "PC",
+                "articleSortType": "PRICE_ASC"}
+        if seed:
+            body["seed"] = seed
+        if last_info:
+            body["lastInfo"] = last_info
+        result = api_post("/complex/article/list", body, referer)["result"]
+        lst = result.get("list") or []
+        items.extend(lst)
+        if total is None:
+            total = result.get("totalCount")
+        seed = seed or result.get("seed")
+        last_info = result.get("lastInfo")
+        print(f"    page {page}: +{len(lst)} (누적 {len(items)} / 총 {total})")
+        if not result.get("hasNextPage") or not lst:
+            break
+        if page > 200:
+            raise RuntimeError("페이지 순회가 끝나지 않습니다 — 커서 로직 확인 필요")
         time.sleep(DELAY_SEC)
-    return items, tot_cnt
+    return items, total
+
 
 def main():
     base = os.path.dirname(os.path.abspath(__file__))
     ts = datetime.now().strftime("%Y-%m-%dT%H%M%S")
     out = os.path.join(base, "naver_data", ts)
     os.makedirs(out, exist_ok=True)
+
+    print("[세션] 쿠키 획득 중...")
+    open_session()
+    time.sleep(DELAY_SEC)
+
     counts, cmap = {}, {}
     for name, no in COMPLEXES.items():
         if not no:
             print(f"[검색] {name} 단지번호 조회 중...")
             no = resolve_complex_no(name)
             time.sleep(DELAY_SEC)
-        cmap[no] = name
+        cmap[str(no)] = name
         print(f"[수집] {name} (단지번호 {no})")
         for tt in TRADE_TYPES:
-            label = {"A1": "매매", "B1": "전세"}.get(tt, tt)
+            label = {"A1": "매매", "B1": "전세", "B2": "월세", "B3": "단기"}.get(tt, tt)
             print(f"  - {label}({tt})")
             items, tot = fetch_articles(no, tt)
             with open(os.path.join(out, f"{no}_{tt}.json"), "w", encoding="utf-8") as f:
                 json.dump(items, f, ensure_ascii=False)
             counts[f"{no}_{tt}"] = tot
-            print(f"    완료: {len(items)}건 수집 / 네이버 표시 {tot}건")
+            print(f"    완료: 대표매물 {len(items)}건 / 네이버 표시 {tot}건")
             time.sleep(DELAY_SEC)
+
     with open(os.path.join(out, "counts.json"), "w", encoding="utf-8") as f:
         json.dump(counts, f, ensure_ascii=False, indent=1)
     with open(os.path.join(out, "complexes.json"), "w", encoding="utf-8") as f:
         json.dump(cmap, f, ensure_ascii=False, indent=1)
     print(f"\n✅ 수집 완료 → {out}")
-    print("이 폴더(naver_data)를 Claude 세션에 연결하거나, 안의 JSON들을 대화에 첨부해 주세요.")
+    print(f"다음: python3 scripts/ingest.py {out}")
+
 
 if __name__ == "__main__":
     try:
