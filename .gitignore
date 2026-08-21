@@ -1,0 +1,10 @@
+naver_data/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/ambiguous_*.json
+data/verdicts_*.json
+__pycache__/
+*.pyc
+.DS_Store
+*:Zone.Identifier
