@@ -8,6 +8,13 @@
 ## 빠른 시작
 
 ```bash
+# 조사 1회를 끝까지 (평소에는 이것만)
+python3 run_all.py
+```
+
+## 단계별 실행
+
+```bash
 # 1) DB 초기화 (최초 1회, 이미 data/monitor.db가 있으면 생략)
 python3 -c "import sqlite3; sqlite3.connect('data/monitor.db').executescript(open('scripts/schema.sql').read())"
 
@@ -27,9 +34,19 @@ python3 scripts/dedup.py apply <snapshot_id> data/verdicts_<snapshot_id>.json
 # 6) 정합성 진단
 python3 scripts/integrity.py <snapshot_id> naver_data/<수집시각>/counts.json
 
-# 7) 대시보드 생성 (dashboard/index.html — 브라우저로 열면 끝)
+# 7) 조사일 간 물건 연결 (신규/소멸/호가변동 기록)
+python3 scripts/link_snapshots.py
+
+# 8) 대시보드 생성 (dashboard/index.html — 브라우저로 열면 끝)
 python3 scripts/build_dashboard.py
 ```
+
+## 시간축은 조사일이다
+
+등록일 기준으로 물량을 세면 팔리거나 내린 매물이 응답에서 빠지는 탓에 언제나 조사일에
+가까운 쪽이 많아 보인다. 그래서 조사할 때마다 전량을 스냅샷으로 통째 저장하고, 조사일
+축에서 비교한다. 소멸은 이 축에서만 관측되므로 실제 순증감과 호가 변동도 여기서만 나온다.
+**`run_all.py`를 주기적으로 돌리는 것 자체가 데이터를 만드는 일이다.**
 
 ## 대시보드
 

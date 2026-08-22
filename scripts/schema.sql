@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS complexes (
 CREATE TABLE IF NOT EXISTS snapshots (
   snapshot_id  INTEGER PRIMARY KEY AUTOINCREMENT,
   collected_at TEXT NOT NULL,             -- ISO8601, Asia/Seoul
-  notes        TEXT
+  notes        TEXT,
+  source_dir   TEXT                        -- 이 스냅샷을 만든 수집 폴더 (재적재 방지)
 );
 
 -- 수집 agent 산출물: 스냅샷 시점의 전 매물 (원본 그대로)
@@ -86,3 +87,35 @@ CREATE TABLE IF NOT EXISTS integrity_checks (
 CREATE INDEX IF NOT EXISTS idx_raw_articles_cx ON raw_articles(complex_no, trade_type, snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_raw_articles_grp ON raw_articles(snapshot_id, naver_group);
 CREATE INDEX IF NOT EXISTS idx_dedup_group ON dedup_assignments(snapshot_id, group_key);
+
+-- ── 조사일(스냅샷)을 가로지르는 물건 정체성 ──────────────────────
+-- raw_articles는 이미 스냅샷 단위로 쌓이지만, dedup 그룹키는 스냅샷 안에서만
+-- 유효하다. 같은 실물이 조사일마다 다른 그룹키를 받으므로 "이 물건이 지난
+-- 조사에도 있었나 / 호가가 변했나"를 물을 수 없다. 그 연결을 여기서 만든다.
+CREATE TABLE IF NOT EXISTS unit_links (
+  snapshot_id  INTEGER NOT NULL,
+  group_key    TEXT NOT NULL,            -- dedup_assignments.group_key (스냅샷 지역)
+  unit_id      TEXT NOT NULL,            -- 스냅샷을 가로지르는 물건 ID
+  match        TEXT,                     -- 'article'(매물번호 겹침) | 'key'(물건키) | 'new'
+  PRIMARY KEY (snapshot_id, group_key)
+);
+
+-- 조사일별 물건 상태와 직전 조사 대비 변화.
+-- 'gone'은 사라진 것이 관측된 조사일에 기록한다(그 조사일에는 물건이 없다).
+CREATE TABLE IF NOT EXISTS unit_events (
+  snapshot_id      INTEGER NOT NULL,
+  unit_id          TEXT NOT NULL,
+  complex_no       TEXT,
+  trade_type       TEXT,
+  event            TEXT NOT NULL,        -- 'new' | 'gone' | 'up' | 'down' | 'flat'
+  price_krw        INTEGER,              -- 이 조사일의 호가 (gone이면 NULL)
+  prev_price_krw   INTEGER,              -- 직전 조사일의 호가
+  delta_krw        INTEGER,              -- price - prev_price
+  prev_snapshot_id INTEGER,
+  days_listed      INTEGER,              -- 최초 관측 조사일로부터 경과일
+  PRIMARY KEY (snapshot_id, unit_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_links_unit ON unit_links(unit_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_unit_events_unit ON unit_events(unit_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_unit_events_snap ON unit_events(snapshot_id, event);

@@ -131,9 +131,23 @@ INSERT_SQL = (f"INSERT OR REPLACE INTO raw_articles ({','.join(COLUMNS)}) "
               f"VALUES ({','.join(':' + c for c in COLUMNS)})")
 
 
-def ingest(snapshot_dir, notes=""):
+def ensure_source_dir_column(con):
+    """기존 DB에도 source_dir을 붙인다 (CREATE IF NOT EXISTS는 컬럼을 추가하지 않는다)."""
+    cols = [r[1] for r in con.execute("PRAGMA table_info(snapshots)")]
+    if "source_dir" not in cols:
+        con.execute("ALTER TABLE snapshots ADD COLUMN source_dir TEXT")
+
+
+def ingest(snapshot_dir, notes="", force=False):
     con = sqlite3.connect(DB)
     cur = con.cursor()
+    ensure_source_dir_column(con)
+    src = os.path.basename(os.path.normpath(snapshot_dir))
+    dup = con.execute("SELECT snapshot_id FROM snapshots WHERE source_dir=?", (src,)).fetchone()
+    if dup and not force:
+        # 같은 수집 폴더를 두 번 적재하면 가짜 조사일이 생겨 추이가 통째로 왜곡된다
+        raise SystemExit(f"수집 폴더 {src} 는 이미 스냅샷 #{dup[0]}으로 적재되어 있습니다. "
+                         f"의도한 재적재라면 force=True로 부르세요.")
 
     # 단지 마스터 갱신
     cx_path = os.path.join(snapshot_dir, "complexes.json")
@@ -144,8 +158,8 @@ def ingest(snapshot_dir, notes=""):
                         (str(no), name))
 
     collected_at = datetime.now(KST).isoformat(timespec="seconds")
-    cur.execute("INSERT INTO snapshots(collected_at, notes) VALUES (?,?)",
-                (collected_at, notes))
+    cur.execute("INSERT INTO snapshots(collected_at, notes, source_dir) VALUES (?,?,?)",
+                (collected_at, notes, src))
     sid = cur.lastrowid
 
     n_rows = n_repr = 0

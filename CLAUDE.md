@@ -28,6 +28,20 @@ body: {complexNumber, tradeTypes:["A1"], size:<=30, userChannelType:"PC",
 - 가격은 **원 단위**로 온다 (3900000000 = 39억). DB에는 만원으로 환산해 넣는다.
 - 요청 간 0.8초 지연을 유지하고, 디버깅 중 반복 호출을 최소화한다. IP 차단을 당하면 프로젝트 전체가 멈춘다.
 
+## 시간축은 조사일이지, 등록일이 아니다
+
+등록일(`exposure_date`) 축으로 물량을 세면 **언제나 조사일에 가까운 쪽이 많아 보인다.**
+팔리거나 내린 매물은 API 응답에서 사라지므로 과거 등록일의 물량이 구조적으로 깎이기
+때문이다(생존 편향). 등록일 축은 "지금 살아 있는 매물이 언제 올라왔나"까지만 답할 수 있다.
+
+그래서 조사 때마다 전량을 스냅샷으로 통째 저장하고(`raw_articles` PK가
+`(snapshot_id, article_no)`), 조사일 축에서 비교한다. `unit_links`가 스냅샷을 가로질러
+같은 물건에 `unit_id`를 부여하고, `unit_events`가 조사일마다 신규/소멸/호가변동을 남긴다.
+**이 축에서만 소멸이 관측되므로, 순증감과 실제 호가 변동은 여기서만 나온다.**
+
+물건 매칭은 (1) 매물번호 겹침, (2) 물건키(단지·거래유형·동·전용·층표기·방향) + 호가 근접
+순으로 탐욕적 1:1 배정한다. 중개사가 매물을 내렸다 다시 올리면 매물번호가 바뀌므로 (2)가 필요하다.
+
 ## 물량 밴드 — 이 프로젝트의 핵심 판단
 
 수집된 대표매물 716건 중 **정확한 층이 표기된 것은 28건(4%)뿐**이고 나머지는 전부 저/중/고 대역이다. 34층 건물의 "저"는 11개 층에 걸친다. 따라서 `(106동, 저, 84.5㎡, 39.0억, 남향)` 4건이 4중 등록인지 실제 4세대인지 **데이터만으로는 판별할 수 없다.**
@@ -47,12 +61,15 @@ scripts/schema.sql        DB 스키마
 scripts/ingest.py         JSON → SQLite 적재 (대표매물 + 묶음 멤버를 모두 펼쳐 넣음)
 scripts/dedup.py          네이버 묶음 위의 보수적 2차 병합 + 애매 쌍 추출 / AI verdicts 반영(apply)
 scripts/integrity.py      누락(missing) 감시 + 물량 밴드 폭(wide) 감시
+scripts/link_snapshots.py 조사일을 가로질러 같은 물건을 잇고 변화(신규/소멸/호가)를 기록
 scripts/build_dashboard.py  DB → JSON → dashboard/index.html 한 장으로 굽기
 dashboard/template.html   대시보드 앱 본체 (여기를 고친다. index.html은 생성물)
+run_all.py                조사 1회를 끝까지 돌리는 오케스트레이터
 data/monitor.db           SQLite
 ```
 
-파이프라인: `collect → ingest → dedup → (AI 판정) → dedup apply → integrity → dashboard`
+파이프라인: `collect → ingest → dedup → (AI 판정) → dedup apply → integrity → link → dashboard`
+평소에는 `python3 run_all.py` 한 줄이면 된다.
 
 ## 데이터 모델 요점
 
@@ -61,6 +78,9 @@ data/monitor.db           SQLite
 - `exposure_date` = 등록(노출 시작) 시점. R8의 dot plot x축은 이 값을 쓴다.
 - `dedup_assignments` — 자체 2차 병합. `method`는 `naver`(네이버 묶음 그대로) / `rule`(자체가 추가 병합) / `ai` / `singleton`.
 - `integrity_checks` — 단지×거래유형별 진단.
+- `unit_links` — (스냅샷, 그룹키) → `unit_id`. `match`는 `article`/`key`/`new`.
+- `unit_events` — 조사일별 `new`/`gone`/`up`/`down`/`flat`과 Δ호가, 경과일.
+- `snapshots.source_dir` — 이 스냅샷을 만든 수집 폴더. 같은 폴더 재적재를 막는다(가짜 조사일이 생기면 추이가 통째로 왜곡된다).
 
 ## 작업 시 주의
 

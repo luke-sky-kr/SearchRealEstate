@@ -125,8 +125,8 @@ def build(db=DB):
     }
 
 
-def main():
-    out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
+def main(out_path=None):
+    out_path = out_path or DEFAULT_OUT
     data = build()
     with open(TEMPLATE, encoding="utf-8") as f:
         html = f.read()
@@ -146,4 +146,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1] if len(sys.argv) > 1 else None)

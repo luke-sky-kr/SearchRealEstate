@@ -184,6 +184,7 @@ def main():
         json.dump(cmap, f, ensure_ascii=False, indent=1)
     print(f"\n✅ 수집 완료 → {out}")
     print(f"다음: python3 scripts/ingest.py {out}")
+    return out
 
 
 if __name__ == "__main__":
