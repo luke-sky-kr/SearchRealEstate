@@ -356,10 +356,13 @@ function buildTree() {
     }
     let tn = pn.kids.get(v.ty);
     if (!tn) {
-      const py1 = v.sup ? (v.sup / 3.3058).toFixed(1) + "평" : "평형 미상";
+      // 관례 평형이 있으면 그걸 쓴다. 환산값은 툴팁에 남겨 둔다.
+      const alias = DATA.aliasByType?.[v.cx + "|" + v.ty];
+      const conv = v.sup ? (v.sup / 3.3058).toFixed(1) + "평" : "평형 미상";
+      const py1 = alias ? alias + "평" : conv;
       tn = { id: pn.id + "/" + (v.ty || "미상"),
              label: (v.ty || "타입 미상") + " · " + py1,
-             hint: `공급 ${v.sup ?? "?"}㎡ · 전용 ${v.pk}㎡`,
+             hint: `공급 ${v.sup ?? "?"}㎡ (${conv}) · 전용 ${v.pk}㎡`,
              sup: v.sup || 0, kids: new Map() };
       pn.kids.set(v.ty, tn);
     }

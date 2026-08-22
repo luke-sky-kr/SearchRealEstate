@@ -19,6 +19,15 @@ DEFAULT_OUT = os.path.join(HERE, "..", "dashboard", "index.html")
 PYEONG_M2 = 3.3058      # 1평 = 3.3058㎡
 CLUSTER_GAP = 2.0       # 전용면적 단일연결 군집 임계 (㎡)
 
+# 분양 관례 평형. 공급면적 환산값과 시장에서 부르는 이름이 어긋나는 타입이 있다.
+# LG한강자이 179M은 179.26㎡ = 54.2평이지만 분양 때부터 55평형으로 불렸고
+# 매물 광고도 호가 비교도 전부 그 이름으로 돈다. 환산값은 그대로 두고(툴팁에 남는다)
+# 라벨만 관례명으로 덮는다. (단지번호, 네이버 타입명) -> 평형.
+PYEONG_ALIAS = {
+    ("3143", "179M"): 55,   # LG한강자이 50평대
+    ("3143", "180L"): 55,
+}
+
 
 def cluster_areas(areas):
     """전용면적 목록을 단일연결로 묶어 {면적: 군집대표} 매핑을 만든다.
@@ -87,8 +96,15 @@ def build(db=DB):
             supply_by_rep[(a["complex_no"], rep)].append(a["area_supply"])
         if a["area_name"]:
             types_by_rep[(a["complex_no"], rep)].add(a["area_name"])
-    pyeong = {k: round(statistics.median(v) / PYEONG_M2)
-              for k, v in supply_by_rep.items()}
+    def label_pyeong(key, supplies):
+        """군집의 평형 라벨. 속한 타입이 모두 같은 관례명을 가리키면 그걸 쓴다."""
+        al = {PYEONG_ALIAS[(key[0], t)] for t in types_by_rep.get(key, ())
+              if (key[0], t) in PYEONG_ALIAS}
+        if len(al) == 1:
+            return al.pop()
+        return round(statistics.median(supplies) / PYEONG_M2)
+
+    pyeong = {k: label_pyeong(k, v) for k, v in supply_by_rep.items()}
 
     # 조사일을 가로지르는 물건 식별자. 이게 있어야 신규/소멸을 조사일 축에서 셀 수 있다.
     uid = {(r["snapshot_id"], r["group_key"]): r["unit_id"]
@@ -154,6 +170,8 @@ def build(db=DB):
                       for (cx, rep), v in types_by_rep.items()},
         "supplyByKey": {f"{cx}|{round(rep, 1)}": round(statistics.median(v), 1)
                         for (cx, rep), v in supply_by_rep.items()},
+        # 타입 단위 관례 평형 — 트리 잎 라벨이 상위 평형 노드와 어긋나지 않게 한다
+        "aliasByType": {f"{cx}|{ty}": v for (cx, ty), v in PYEONG_ALIAS.items()},
     }
 
 
