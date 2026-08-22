@@ -37,6 +37,8 @@ from datetime import datetime
 COMPLEXES = {
     "래미안신반포팰리스": 108228,  # None = 자동 검색, 또는 108228 처럼 직접 지정
     "래미안퍼스티지": None,
+    "삼성힐스테이트2단지": 24008,   # 강남구 삼성동, 926세대
+    "LG한강자이": 3143,             # 용산구 이촌동, 656세대
 }
 TRADE_TYPES = ["A1", "B1"]      # A1=매매, B1=전세 (B2=월세, B3=단기)
 DELAY_SEC = 0.8                 # 요청 간격 (서버 부담 방지)
@@ -104,14 +106,37 @@ def open_session():
 
 
 def resolve_complex_no(name):
-    """단지명 -> 네이버 단지번호. m.land 검색이 fin.land로 리다이렉트되는 것을 이용."""
-    url = "https://m.land.naver.com/search/result/" + urllib.parse.quote(name)
-    code, loc, body = http_get(url, follow_redirect=False)
+    """단지명 -> 네이버 단지번호.
+
+    1차: new.land 검색 API. 이름이 정확히 일치하는 아파트를 우선 고른다.
+    2차: m.land 검색 리다이렉트. 검색어가 한 단지로 딱 떨어질 때만 통한다.
+    """
+    url = ("https://new.land.naver.com/api/search?page=1&keyword="
+           + urllib.parse.quote(name))
+    try:
+        _, _, body = http_get(url)
+        cands = json.loads(body).get("complexes") or []
+    except Exception:
+        cands = []
+    if cands:
+        def norm(x): return re.sub(r"[\s()]", "", x or "")
+        exact = [c for c in cands if norm(c.get("complexName")) == norm(name)]
+        picked = (exact or cands)[0]
+        if not exact and len(cands) > 1:
+            others = ", ".join(f"{c.get('complexName')}({c.get('complexNo')})"
+                               for c in cands[1:4])
+            print(f"    ! '{name}' 검색 결과가 여러 개입니다. "
+                  f"{picked.get('complexName')}({picked.get('complexNo')})를 씁니다. "
+                  f"다른 후보: {others}")
+        return int(picked["complexNo"])
+
+    m2 = "https://m.land.naver.com/search/result/" + urllib.parse.quote(name)
+    code, loc, body = http_get(m2, follow_redirect=False)
     for target in (loc or "", body or ""):
         m = re.search(r"/complex(?:es|/info)/(\d+)", target)
         if m:
             return int(m.group(1))
-    code, final_url, body = http_get(url)
+    code, final_url, body = http_get(m2)
     m = (re.search(r"/complex(?:es|/info)/(\d+)", final_url)
          or re.search(r"/complex(?:es|/info)/(\d+)", body)
          or re.search(r'complexNumber["\']?\s*[:=]\s*["\']?(\d+)', body))

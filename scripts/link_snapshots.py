@@ -128,6 +128,14 @@ def run(rebuild=False):
                             JOIN snapshots s USING(snapshot_id) GROUP BY l.unit_id"""):
         first_seen[r["unit_id"]] = r["at"][:10]
 
+    # 조사일마다 실제로 훑은 단지 집합. 단지를 새로 추가하거나 빼면
+    # 그 단지의 물건이 통째로 신규/소멸로 잡히는데, 그건 시장이 아니라
+    # 조사 범위가 바뀐 것이다. 이걸 구분하려면 커버리지를 알아야 한다.
+    covered = {}
+    for r in con.execute("""SELECT snapshot_id, complex_no FROM raw_articles
+                            GROUP BY snapshot_id, complex_no"""):
+        covered.setdefault(r["snapshot_id"], set()).add(r["complex_no"])
+
     prev_groups, prev_sid, prev_unit = None, None, {}
     if done:
         last = max(done)
@@ -141,6 +149,8 @@ def run(rebuild=False):
         if sid in done:
             continue
         cur = load_groups(con, sid)
+        cur_cov = covered.get(sid, set())
+        prev_cov = covered.get(prev_sid, set()) if prev_sid else set()
         today = sn["collected_at"][:10]
         assigned = match(prev_groups, cur) if prev_groups else {}
 
@@ -160,7 +170,9 @@ def run(rebuild=False):
             con.execute("INSERT INTO unit_links VALUES (?,?,?,?)", (sid, gk, uid, how))
 
             if prev_price is None:
-                ev, delta = "new", None
+                # 직전 조사에 아예 없던 단지라면 신규 매물이 아니라 조사 편입이다.
+                ev = "new" if (not prev_sid or u["complex_no"] in prev_cov) else "enter"
+                delta = None
             else:
                 delta = (u["price"] or 0) - prev_price
                 ev = "flat" if delta == 0 else ("up" if delta > 0 else "down")
@@ -174,21 +186,27 @@ def run(rebuild=False):
             alive = set(cur_unit.values())
             for pg, u in prev_groups.items():
                 uid = prev_unit[pg]
-                if uid in alive:
-                    continue
+                if uid in alive or u["complex_no"] not in cur_cov:
+                    continue   # 이번에 안 훑은 단지는 사라진 게 아니라 안 본 것이다
                 con.execute("INSERT INTO unit_events VALUES (?,?,?,?,?,?,?,?,?,?)",
                             (sid, uid, u["complex_no"], u["trade_type"], "gone", None,
                              u["price"], None, prev_sid,
                              days_between(first_seen.get(uid, today), today)))
 
-        n_new = sum(1 for gk in cur if gk not in assigned)
-        n_gone = con.execute("SELECT COUNT(*) FROM unit_events WHERE snapshot_id=? AND event='gone'",
-                             (sid,)).fetchone()[0]
+        cnt = dict(con.execute("""SELECT event, COUNT(*) FROM unit_events
+                                  WHERE snapshot_id=? GROUP BY event""", (sid,)).fetchall())
+        n_new, n_gone, n_enter = cnt.get("new", 0), cnt.get("gone", 0), cnt.get("enter", 0)
+        skipped = sorted(prev_cov - cur_cov) if prev_sid else []
         chg = dict(con.execute("""SELECT event, COUNT(*) FROM unit_events
                                   WHERE snapshot_id=? AND event IN ('up','down')
                                   GROUP BY event""", (sid,)).fetchall())
-        print(f"  스냅샷 {sid} ({today}): 물건 {len(cur)}건 · 신규 {n_new} · 소멸 {n_gone} · "
-              f"호가↑ {chg.get('up', 0)} · 호가↓ {chg.get('down', 0)}")
+        line = (f"  스냅샷 {sid} ({today}): 물건 {len(cur)}건 · 신규 {n_new} · 소멸 {n_gone} · "
+                f"호가↑ {chg.get('up', 0)} · 호가↓ {chg.get('down', 0)}")
+        if n_enter:
+            line += f" · 조사편입 {n_enter}(단지 추가분, 신규 아님)"
+        if skipped:
+            line += f" · 이번에 안 훑은 단지 {', '.join(skipped)}(소멸로 세지 않음)"
+        print(line)
 
         prev_groups, prev_sid, prev_unit = cur, sid, cur_unit
         con.commit()
