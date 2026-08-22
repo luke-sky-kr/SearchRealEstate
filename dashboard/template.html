@@ -280,7 +280,8 @@ td.desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-spa
 
     <section class="card">
       <header><h2>물량 추이</h2></header>
-      <div class="sub">물량은 단일 수치가 아니라 밴드다 — 하한은 자체 2차 병합, 상한은 네이버 동일매물묶기.</div>
+      <div class="sub">물량은 단일 수치가 아니라 밴드다 — 하한은 자체 2차 병합, 상한은 네이버 동일매물묶기.
+        밴드 폭은 추세가 아니라 <b>그 조사일의 불확실성</b>이므로 세로로 세우고, 날짜를 잇는 선은 밴드 중앙값 하나만 쓴다.</div>
       <div class="legend" id="trend-legend"></div>
       <div class="facets" id="trend-facets"></div>
     </section>
@@ -1047,7 +1048,7 @@ function renderTrend() {
     return;
   }
 
-  legend.append(el("div", "item", "단지마다 띠 하나 — 아래가 하한, 위가 상한"));
+  legend.append(el("div", "item", "조사일마다 세로 밴드 = 그날의 하한~상한 · 선 = 밴드 중앙값"));
   for (const tt of ttList()) {
     const facet = el("div");
     if (ttList().length > 1) facet.append(el("div", "facet-title", TT_LABEL[tt]));
@@ -1059,7 +1060,8 @@ function renderTrend() {
 function trendPlot(tt) {
   const wrap = el("div", "plot");
   const W = Math.max(360, (document.querySelector("main")?.clientWidth || 900) - 38);
-  const H = 292, box = { l: 52, t: 24, w: W - 68, h: H - 64 };
+  // 오른쪽 여백은 마지막 밴드 옆 라벨("316–447") 자리다
+  const H = 292, box = { l: 52, t: 24, w: W - 124, h: H - 64 };
   const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
   s.setAttribute("aria-label", `${TT_LABEL[tt]} 물량 추이`);
 
@@ -1089,27 +1091,58 @@ function trendPlot(tt) {
     s.append(svgText(X(i), box.t + box.h + 18, snapLabel(i), { tabular: true }));
   });
 
-  for (const g of series) {
+  // 밴드는 조사일마다 하나씩 세운다. 상한선과 하한선을 각각 이어 리본으로
+  // 그리면 두 선이 각자 추세인 것처럼 읽히지만, 실은 한 조사일의 불확실성
+  // 폭이다. 폭은 그날 안에서 세로로 보여주고, 날짜를 잇는 것은 중앙값 하나다.
+  const m = series.length;
+  const step = n > 1 ? box.w / (n - 1) : box.w;
+  const slot = Math.min(16, (step * 0.62) / Math.max(1, m));
+  const bandW = Math.max(4, Math.min(9, slot - 3));
+  const dx = k => (k - (m - 1) / 2) * slot;
+  const mid = p => (p.lo + p.hi) / 2;
+  const labels = [];
+
+  series.forEach((g, k) => {
     const col = cxColor(g.cx);
-    const up = g.pts.map(p => `${X(p.i)},${Y(p.hi)}`);
-    const dn = g.pts.map(p => `${X(p.i)},${Y(p.lo)}`).reverse();
-    if (g.pts.length > 1) {
-      s.append(svg("polygon", { points: [...up, ...dn].join(" "), fill: col, opacity: .10 }));
-      for (const key of ["hi", "lo"]) {
-        s.append(svg("polyline", { points: g.pts.map(p => `${X(p.i)},${Y(p[key])}`).join(" "),
+    const px = p => X(p.i) + dx(k);
+
+    for (const p of g.pts) {
+      const yh = Y(p.hi), h = Math.max(2, Y(p.lo) - yh);
+      s.append(svg("rect", { x: px(p) - bandW / 2, y: yh, width: bandW, height: h,
+        rx: Math.min(bandW / 2, h / 2), fill: col, opacity: .30 }));
+    }
+
+    // 결측 조사일에서는 선을 끊는다 — 이어 버리면 안 본 날을 본 것처럼 만든다
+    let run = [];
+    const flush = () => {
+      if (run.length > 1) {
+        s.append(svg("polyline", { points: run.map(p => `${px(p)},${Y(mid(p))}`).join(" "),
           fill: "none", stroke: col, "stroke-width": 2,
-          "stroke-linejoin": "round", "stroke-linecap": "round", opacity: key === "hi" ? .55 : 1 }));
+          "stroke-linejoin": "round", "stroke-linecap": "round" }));
       }
-    } else {
-      // 조사일이 하나뿐인 단지 — 선 대신 밴드를 세로 막대로 세운다
-      const p = g.pts[0];
-      s.append(svg("line", { x1: X(p.i), x2: X(p.i), y1: Y(p.hi), y2: Y(p.lo),
-        stroke: col, "stroke-width": 3, opacity: .5, "stroke-linecap": "round" }));
+      run = [];
+    };
+    for (const p of g.pts) {
+      if (run.length && p.i !== run[run.length - 1].i + 1) flush();
+      run.push(p);
+    }
+    flush();
+
+    for (const p of g.pts) {
+      s.append(svg("circle", { cx: px(p), cy: Y(mid(p)), r: 3, fill: col,
+        stroke: "var(--surface-1)", "stroke-width": 1.5 }));
     }
     const last = g.pts[g.pts.length - 1];
-    s.append(svg("circle", { cx: X(last.i), cy: Y(last.lo), r: 4.5, fill: col,
-      stroke: "var(--surface-1)", "stroke-width": 2 }));
-    s.append(svgText(X(last.i) + 9, Y(last.lo) + 4, `${last.lo}–${last.hi}`,
+    labels.push({ x: px(last) + bandW / 2 + 7, y: Y(mid(last)), t: `${last.lo}–${last.hi}` });
+  });
+
+  // 마지막 밴드 옆 숫자들이 겹치면 아래로 밀어 떼어 놓는다
+  labels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) {
+    if (labels[i].y - labels[i - 1].y < 13) labels[i].y = labels[i - 1].y + 13;
+  }
+  for (const L of labels) {
+    s.append(svgText(L.x, L.y + 4, L.t,
       { anchor: "start", fill: "var(--text-secondary)", tabular: true }));
   }
 
@@ -1130,8 +1163,9 @@ function trendPlot(tt) {
       for (const g of series) {
         const p = g.pts.find(q => q.i === i), row = el("div", "r");
         const k2 = el("span", "k"); k2.style.color = cxColor(g.cx);
-        row.append(k2, el("span", null, p ? `${cxName(g.cx)} ${p.lo}–${p.hi}건`
-                                          : `${cxName(g.cx)} 이 날은 조사 안 함`));
+        row.append(k2, el("span", null,
+          p ? `${cxName(g.cx)} ${p.lo}–${p.hi}건 (중앙 ${Math.round(mid(p))})`
+            : `${cxName(g.cx)} 이 날은 조사 안 함`));
         out.push(row);
       }
       return out;
