@@ -239,8 +239,8 @@ td.desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-spa
     </section>
 
     <section class="card">
-      <header><h2>호가 분포</h2></header>
-      <div class="sub">점 1개 = 물건 1개(중복 등록을 묶은 단위), 세로축은 그룹 최저 호가. 가로축은 최초 등록일. 파선은 최소제곱 추세선.</div>
+      <header><h2>호가와 등록 추이</h2></header>
+      <div class="sub">두 패널이 등록일 축 하나를 공유한다. <b>위</b> — 점 1개 = 물건 1개(중복 등록을 묶은 단위), 세로축은 그룹 최저 호가, 파선은 최소제곱 추세선. <b>아래</b> — 같은 날짜에 등록된 매물 수. 스냅샷이 1개라 여기 보이는 것은 <b>지금 살아 있는 매물</b>뿐이다. 이미 팔리거나 내린 매물은 빠져 있어 과거로 갈수록 실제보다 적게 보이므로, 오른쪽 끝의 증가는 유입이 늘어난 것일 수도 있고 아직 소진되지 않은 것일 수도 있다. 소멸까지 반영한 순증감은 스냅샷이 2개 이상일 때 아래 물량 추이에서 볼 수 있다.</div>
       <div class="legend" id="dot-legend"></div>
       <div class="facets" id="dot-facets"></div>
     </section>
@@ -517,6 +517,23 @@ function niceTicks(min, max, count) {
   for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) out.push(+v.toFixed(10));
   return out;
 }
+// 최대값을 덮는 가장 촘촘한 "깔끔한" 천장을 찾는다.
+// 최상단 눈금이 최대값보다 낮으면 막대가 플롯 위로 뚫고 나간다.
+function axisScale(max, maxTicks) {
+  max = Math.max(max, 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(max)) - 1);
+  for (let e = 0; e < 14; e++) {
+    for (const m of [1, 2, 2.5, 5]) {
+      const step = m * mag * Math.pow(10, e);
+      if (step > 0 && Math.ceil(max / step) <= maxTicks) {
+        const top = Math.ceil(max / step) * step, ticks = [];
+        for (let v = 0; v <= top + 1e-9; v += step) ticks.push(+v.toFixed(10));
+        return { top, ticks };
+      }
+    }
+  }
+  return { top: max, ticks: [0, max] };
+}
 function dayTicks(x0, x1, count) {
   // 눈금을 자정에 맞춘다 — 라벨이 날짜인데 눈금이 한낮이면 그림이 거짓말을 한다
   const DAY = 864e5;
@@ -566,6 +583,7 @@ function renderDots() {
   const rule = el("span", "rule"); rule.style.color = "var(--muted)";
   tr.append(rule, el("span", null, "추세선 (최소제곱)"));
   legend.append(tr);
+  legend.append(el("div", "item", "아래 패널 — 연한 막대 = 원시 매물 · 진한 막대 = 물건"));
 
   const box = document.getElementById("dot-facets");
   box.replaceChildren();
@@ -581,14 +599,24 @@ function dotPlot(units, tt) {
   const wrap = el("div", "plot");
   if (!units.length) { wrap.append(el("div", "empty", "선택된 물건이 없습니다.")); return wrap; }
   const W = Math.max(360, (document.querySelector("main")?.clientWidth || 900) - 38);
-  const H = 312, box = { l: 58, t: 24, w: W - 74, h: H - 64 };
+  // 위 패널(호가)과 아래 패널(등록 건수)이 x축 하나를 공유한다 — 같은 날짜를 세로로 짚어 읽는다
+  const GAP = 30;
+  const box  = { l: 58, t: 24, w: W - 74, h: 226 };
+  const cbox = { l: 58, t: 24 + 226 + GAP, w: W - 74, h: 116 };
+  const H = cbox.t + cbox.h + 34;
   const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
-  s.setAttribute("aria-label", `${TT_LABEL[tt]} 호가 분포, 물건 ${units.length}건`);
 
   const dayOf = u => (u.expo ? Date.parse(u.expo) : null);
   const pts = units.filter(u => dayOf(u) != null && u.p != null);
   if (!pts.length) { wrap.append(el("div", "empty", "등록일 정보가 있는 물건이 없습니다.")); return wrap; }
-  const xs = pts.map(dayOf), ys = pts.map(u => u.p);
+  s.setAttribute("aria-label",
+    `${TT_LABEL[tt]} 호가 분포와 등록일별 매물 수, 물건 ${pts.length}건`);
+
+  // 축 범위는 멤버 매물의 등록일까지 덮는다 — 아래 패널이 그 날짜들을 쓴다
+  const memberDays = u => (u.xd && u.xd.length ? u.xd : [u.expo])
+    .map(d => Date.parse(d)).filter(t => !isNaN(t));
+  const xs = pts.flatMap(u => [dayOf(u), ...memberDays(u)]);
+  const ys = pts.map(u => u.p);
   let x0 = Math.min(...xs), x1 = Math.max(...xs);
   if (x0 === x1) { x0 -= 864e5; x1 += 864e5; }
   const pad = (Math.max(...ys) - Math.min(...ys)) * 0.08 || 1;
@@ -598,12 +626,6 @@ function dotPlot(units, tt) {
 
   frame(s, box, niceTicks(y0, y1, 5), Y, t => (t / 10000).toFixed(1));
   s.append(svgText(box.l - 8, box.t - 11, "억", { anchor: "end" }));
-
-  for (const t of dayTicks(x0, x1, Math.min(7, Math.max(2, Math.round(box.w / 105))))) {
-    const d = new Date(t);
-    s.append(svgText(X(t), box.t + box.h + 18,
-      `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, "0")}`, { tabular: true }));
-  }
 
   // 단지별 추세선 — 파선은 "관측이 아니라 적합"이라는 뜻이다
   for (const cx of CX_ORDER) {
@@ -631,9 +653,64 @@ function dotPlot(units, tt) {
     hit.push({ x: cxp, y: cyp, u });
   }
 
+  /* ── 아래 패널: 등록일별 매물 수 ── */
+  const DAY = 864e5;
+  const dayKey = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const d0 = dayKey(x0), nDays = Math.round((dayKey(x1) - d0) / DAY) + 1;
+  const bucketDays = nDays > 70 ? 7 : 1;         // 기간이 길면 주 단위로 묶는다
+  const nbk = Math.max(1, Math.ceil(nDays / bucketDays));
+  const cxs = CX_ORDER.filter(cx => pts.some(u => u.cx === cx));
+  const buckets = Array.from({ length: nbk }, () => {
+    const m = {}; for (const cx of cxs) m[cx] = { arts: 0, units: 0 }; return m;
+  });
+  const bucketOf = t => Math.min(nbk - 1,
+    Math.max(0, Math.floor((dayKey(t) - d0) / DAY / bucketDays)));
+  for (const u of pts) {
+    // 물건은 그룹의 최초 등록일에, 매물은 각자 올라온 날에 센다.
+    // 멤버 매물을 그룹 최초일로 몰면 그날이 부풀고 나중 날이 비어 보인다.
+    buckets[bucketOf(dayOf(u))][u.cx].units++;
+    for (const t of memberDays(u)) buckets[bucketOf(t)][u.cx].arts++;
+  }
+
+  const cMax = Math.max(1, ...buckets.flatMap(b => cxs.map(cx => b[cx].arts)));
+  const cAxis = axisScale(cMax, 4);
+  const CY = v => cbox.t + cbox.h - (v / cAxis.top) * cbox.h;
+  frame(s, cbox, cAxis.ticks, CY, t => String(Math.round(t)));
+  s.append(svgText(cbox.l - 8, cbox.t - 11, "건", { anchor: "end" }));
+
+  // 막대는 날짜 구간의 한가운데 서고, x 위치는 위 패널과 같은 척도를 쓴다
+  const slotMs = bucketDays * DAY;
+  const bkX = i => X(Math.min(x1, Math.max(x0, d0 + (i + 0.5) * slotMs)));
+  const slotPx = Math.abs(X(x0 + slotMs) - X(x0));
+  const barW = Math.max(2, Math.min(18, (slotPx - 3) / cxs.length - 2));
+  const groupW = cxs.length * barW + (cxs.length - 1) * 2;
+  const innerW = Math.max(2, Math.round(barW * 0.52));
+  for (let i = 0; i < nbk; i++) {
+    const gx = bkX(i) - groupW / 2;
+    cxs.forEach((cx, j) => {
+      const x = gx + j * (barW + 2), c = buckets[i][cx];
+      const outer = barPath(x, CY(c.arts), barW, cbox.t + cbox.h - CY(c.arts), 3);
+      if (outer) s.append(svg("path", { d: outer, fill: cxColor(cx), opacity: .20 }));
+      const inner = barPath(x + (barW - innerW) / 2, CY(c.units), innerW,
+                            cbox.t + cbox.h - CY(c.units), 3);
+      if (inner) s.append(svg("path", { d: inner, fill: cxColor(cx) }));
+    });
+  }
+
+  // 공유 x축 눈금은 맨 아래 한 벌만 둔다
+  for (const t of dayTicks(x0, x1, Math.min(7, Math.max(2, Math.round(box.w / 105))))) {
+    const d = new Date(t);
+    s.append(svgText(X(t), cbox.t + cbox.h + 18,
+      `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, "0")}`, { tabular: true }));
+  }
+
   const focus = svg("circle", { r: 8, fill: "none", stroke: "var(--text-primary)",
     "stroke-width": 2, opacity: 0 });
   s.append(focus);
+  // 두 패널을 잇는 세로선 — 위에서 짚은 날짜가 아래 어느 막대인지 보이게 한다
+  const cross = svg("line", { y1: box.t, y2: cbox.t + cbox.h, stroke: "var(--axis)",
+    "stroke-width": 1, opacity: 0 });
+  s.append(cross);
   const overlay = svg("rect", { x: box.l, y: box.t, width: box.w, height: box.h,
     fill: "transparent", style: "cursor:crosshair" });
   s.append(overlay);
@@ -648,12 +725,49 @@ function dotPlot(units, tt) {
       const d = (h.x - px) ** 2 + (h.y - py) ** 2;
       if (d < bd) { bd = d; best = h; }
     }
-    if (!best || Math.sqrt(bd) > 34 * k) { focus.setAttribute("opacity", 0); hideTip(); return; }
+    if (!best || Math.sqrt(bd) > 34 * k) {
+      focus.setAttribute("opacity", 0); cross.setAttribute("opacity", 0); hideTip(); return;
+    }
     focus.setAttribute("cx", best.x); focus.setAttribute("cy", best.y);
     focus.setAttribute("opacity", .9);
+    cross.setAttribute("x1", best.x); cross.setAttribute("x2", best.x);
+    cross.setAttribute("opacity", .8);
     showTip(ev.clientX, ev.clientY, () => tipRows(best.u));
   });
-  overlay.addEventListener("pointerleave", () => { focus.setAttribute("opacity", 0); hideTip(); });
+  overlay.addEventListener("pointerleave", () => {
+    focus.setAttribute("opacity", 0); cross.setAttribute("opacity", 0); hideTip();
+  });
+
+  // 아래 패널은 막대가 아니라 날짜 슬롯 전체가 히트 타깃이다
+  for (let i = 0; i < nbk; i++) {
+    const w = Math.max(6, slotPx);
+    const hitRect = svg("rect", { x: bkX(i) - w / 2, y: cbox.t, width: w, height: cbox.h,
+      fill: "transparent", style: "cursor:pointer" });
+    hitRect.addEventListener("pointermove", ev => {
+      cross.setAttribute("x1", bkX(i)); cross.setAttribute("x2", bkX(i));
+      cross.setAttribute("opacity", .8);
+      showTip(ev.clientX, ev.clientY, () => {
+        const from = new Date(d0 + i * slotMs), to = new Date(d0 + (i + 1) * slotMs - DAY);
+        const fmt = d => `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, "0")}`;
+        const out = [el("div", "v",
+          bucketDays === 1 ? fmt(from) + " 등록" : `${fmt(from)}~${fmt(to)} 등록`)];
+        let any = false;
+        for (const cx of cxs) {
+          const c = buckets[i][cx];
+          if (!c.arts) continue;
+          any = true;
+          const r = el("div", "r");
+          const k = el("span", "k"); k.style.color = cxColor(cx);
+          r.append(k, el("span", null, `${cxName(cx)} 매물 ${c.arts} · 물건 ${c.units}`));
+          out.push(r);
+        }
+        if (!any) out.push(el("div", "r", "이 날 등록된 매물이 없습니다"));
+        return out;
+      });
+    });
+    hitRect.addEventListener("pointerleave", () => { cross.setAttribute("opacity", 0); hideTip(); });
+    s.append(hitRect);
+  }
 
   wrap.append(s);
   return wrap;
@@ -735,12 +849,8 @@ function histPlot(tt) {
 
   const yMax = Math.max(1, ...bins.flatMap(b => cxs.map(cx => b[cx].arts)));
   // 눈금 상한이 최대값보다 작으면 막대가 플롯 위로 뚫고 나간다 — 눈금 간격에 맞춰 천장을 올린다
-  const base = niceTicks(0, yMax, 4);
-  const yStep = base.length > 1 ? base[1] - base[0] : yMax;
-  const yTop = Math.max(yStep, Math.ceil(yMax / yStep) * yStep);
-  const ticks = [];
-  for (let v = 0; v <= yTop + 1e-9; v += yStep) ticks.push(+v.toFixed(10));
-  const Y = v => box.t + box.h - (v / yTop) * box.h;
+  const axis = axisScale(yMax, 4), ticks = axis.ticks;
+  const Y = v => box.t + box.h - (v / axis.top) * box.h;
   frame(s, box, ticks, Y, t => String(Math.round(t)));
   s.append(svgText(box.l - 8, box.t - 11, "건", { anchor: "end" }));
 

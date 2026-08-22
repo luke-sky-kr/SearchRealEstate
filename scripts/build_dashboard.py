@@ -100,7 +100,8 @@ def build(db=DB):
             "p": lead["price_krw"],
             "pmin": min(prices) if prices else None,
             "pmax": max(prices) if prices else None,
-            "expo": expo[0] if expo else None,                 # 최초 등록일
+            "expo": expo[0] if expo else None,                 # 그룹 최초 등록일
+            "xd": expo,                                        # 멤버 매물 각자의 등록일
             "conf": conf[-1] if conf else None,                # 최종 확인일
             "n": len(members),                                 # 묶인 매물 수
             "ng": len({m["naver_group"] for m in members}),     # 네이버 묶음 수 = 상한 기여분
