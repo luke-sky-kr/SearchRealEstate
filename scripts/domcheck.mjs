@@ -11,6 +11,7 @@ const payload = /<script id="payload"[^>]*>([\s\S]*?)<\/script>/.exec(html);
 const app = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]).join("\n");
 if (!payload || !app.trim()) { console.error("스크립트를 찾지 못했습니다"); process.exit(1); }
 
+function run(seed) {
 let nodeCount = 0;
 function mkNode(tag) {
   const n = {
@@ -54,7 +55,7 @@ const document_ = {
   addEventListener() {},
 };
 
-const store = new Map();
+const store = new Map(seed ? [["naver-monitor-dashboard-v1", JSON.stringify(seed)]] : []);
 const ctx = {
   document: document_, window: null, console,
   localStorage: { getItem: k => (store.has(k) ? store.get(k) : null),
@@ -86,14 +87,37 @@ const checks = [
   ["qt-facets", "조사일별 호가"],
   ["flow-facets", "조사일별 증감"],
 ];
+  const svgs = Object.fromEntries(checks.map(([id, label]) => [label, svgsIn(id)]));
+  const rows = (byId.get("table")?.children[0]?.children[1]?.children || []).length;
+  const cxbar = (byId.get("cxbar")?.children || [])
+    .filter(n => n._tag === "button")
+    .map(n => ({ cx: n.dataset.cx, on: n.getAttribute("aria-pressed") === "true",
+                 label: (n.children[1] || {}).textContent }));
+  return { svgs, rows, cxbar };
+}
+
 let bad = 0;
-for (const [id, label] of checks) {
-  const n = svgsIn(id);
+const base = run(null);
+for (const [label, n] of Object.entries(base.svgs)) {
   console.log(`  ${n > 0 ? "✓" : "✗"} ${label}: svg ${n}개`);
   if (n === 0) bad++;
 }
-const rows = (byId.get("table")?.children[0]?.children[1]?.children || []).length;
-console.log(`  ${rows > 0 ? "✓" : "✗"} 물건 목록: ${rows}행`);
-if (rows === 0) bad++;
-console.log(bad ? `✗ 비어 있는 차트 ${bad}개` : "✓ 모든 차트가 그려졌습니다");
+console.log(`  ${base.rows > 0 ? "✓" : "✗"} 물건 목록: ${base.rows}행`);
+if (base.rows === 0) bad++;
+
+// 범례는 스위치다 — 목록에 다 남아 있으면서, 끈 단지는 화면에서 빠져야 한다
+if (!base.cxbar.length) { console.log("  ✗ 단지 범례: 비어 있음"); bad++; }
+else {
+  const off = base.cxbar[0].cx;
+  const dim = run({ hidden: [off] });
+  const stillListed = dim.cxbar.length === base.cxbar.length;
+  const pressed = dim.cxbar.find(b => b.cx === off)?.on;
+  const shrank = dim.rows < base.rows;
+  const ok = stillListed && pressed === false && shrank;
+  console.log(`  ${ok ? "✓" : "✗"} 단지 범례 ${base.cxbar.length}개 · `
+    + `"${base.cxbar[0].label}" 끄면 ${base.rows}행 → ${dim.rows}행`
+    + (stillListed ? "" : " (목록에서 사라짐!)"));
+  if (!ok) bad++;
+}
+console.log(bad ? `✗ 실패 ${bad}건` : "✓ 모든 차트가 그려졌습니다");
 process.exit(bad ? 1 : 0);

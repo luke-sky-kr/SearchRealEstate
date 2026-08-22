@@ -20,6 +20,7 @@
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #8256c9;
+  --series-5: #c0397a;
   --good: #0ca30c;
   --warning: #fab219;
   --serious: #ec835a;
@@ -43,6 +44,7 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #a07ae8;
+    --series-5: #dc5c96;
     --delta-up: #0ca30c;
   }
 }
@@ -61,6 +63,7 @@
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #a07ae8;
+  --series-5: #dc5c96;
   --delta-up: #0ca30c;
 }
 
@@ -164,6 +167,24 @@ main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap:
 .legend .item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
 .legend .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
 .legend .rule { width: 15px; height: 0; border-top: 2px dashed currentColor; opacity: .75; flex: 0 0 15px; }
+
+/* 단지 범례는 화면에 하나뿐이다. 차트마다 같은 목록을 다시 그리면
+   그게 '이 차트의 범위'라는 뜻으로 읽혀 껐다는 사실이 흐려진다. */
+.cxbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.cxbar .lbl { font-size: 12px; color: var(--muted); margin-right: 2px; }
+.cxbar button {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  padding: 5px 11px 5px 9px; border-radius: 999px; font: inherit; font-size: 12px;
+  color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--border);
+}
+.cxbar button:hover { border-color: var(--axis); }
+.cxbar .sw { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 10px; background: currentColor; }
+/* 끈 단지는 지우지 않고 비워 둔다 — 목록에서 사라지면 다시 켤 수가 없다 */
+.cxbar button[aria-pressed="false"] { color: var(--muted); background: transparent; }
+.cxbar button[aria-pressed="false"] .sw { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+.cxbar button[aria-pressed="false"] .nm { text-decoration: line-through; text-decoration-thickness: 1px; }
+.cxbar .cnt { color: var(--muted); font-variant-numeric: tabular-nums; }
 .plot { position: relative; }
 .plot svg { display: block; width: 100%; overflow: visible; }
 .facets { display: flex; flex-direction: column; gap: 22px; }
@@ -233,6 +254,8 @@ td.desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-spa
   </aside>
 
   <main>
+    <div class="cxbar" id="cxbar" role="group" aria-label="단지 표시 선택"></div>
+
     <div class="tiles" id="tiles"></div>
 
     <section class="card">
@@ -297,9 +320,15 @@ const STORE = "naver-monitor-dashboard-v1";
 /* ── 색: 단지가 곧 색이다. 필터를 바꿔도 단지 색은 그대로다. ── */
 const CX_ORDER = Object.keys(DATA.complexes).sort(
   (a, b) => (DATA.complexes[a] || "").localeCompare(DATA.complexes[b], "ko"));
-const SERIES_SLOTS = ["--series-1", "--series-2", "--series-3", "--series-4"];
+const SERIES_SLOTS = ["--series-1", "--series-2", "--series-3",
+                      "--series-4", "--series-5"];
+// 표시 순서는 이름순이지만 색은 추가 순서로 고정한다. 단지를 하나 넣었다고
+// 기존 단지 색이 밀리면 어제 본 차트와 오늘 본 차트가 다른 그림이 된다.
+const COLOR_ORDER = [...CX_ORDER].sort((a, b) =>
+  String(DATA.addedAt?.[a] ?? "").localeCompare(String(DATA.addedAt?.[b] ?? ""))
+  || (DATA.complexes[a] || "").localeCompare(DATA.complexes[b], "ko"));
 const cxColor = cx => {
-  const i = CX_ORDER.indexOf(cx);
+  const i = COLOR_ORDER.indexOf(cx);
   return `var(${SERIES_SLOTS[i] ?? "--muted"})`;
 };
 const cxName = cx => DATA.complexes[cx] || cx;
@@ -417,7 +446,7 @@ function defaultSelection() {
 }
 
 let state = { tt: "A1", selected: defaultSelection(), open: new Set(TREE.map(n => n.id)),
-              sort: { key: "p", dir: -1 } };
+              hidden: new Set(), sort: { key: "p", dir: -1 } };
 
 try {
   const saved = JSON.parse(localStorage.getItem(STORE) || "null");
@@ -428,6 +457,8 @@ try {
       if (known.length) state.selected = new Set(known);
     }
     if (Array.isArray(saved.open)) state.open = new Set(saved.open);
+    // 없어진 단지 번호가 남아 있어도 무해하다 — 켤 대상이 없을 뿐이다
+    if (Array.isArray(saved.hidden)) state.hidden = new Set(saved.hidden);
   }
 } catch (e) { /* 저장값이 깨졌으면 기본값으로 간다 */ }
 
@@ -444,13 +475,18 @@ try {
 const save = () => {
   try {
     localStorage.setItem(STORE, JSON.stringify({
-      tt: state.tt, selected: [...state.selected], open: [...state.open] }));
+      tt: state.tt, selected: [...state.selected], open: [...state.open],
+      hidden: [...state.hidden] }));
   } catch (e) { /* 사생활 보호 모드 등 — 저장 실패는 무시 */ }
 };
 
 const ttList = () => (state.tt === "both" ? ["A1", "B1"] : [state.tt]);
+// 범례에서 끈 단지는 트리 선택과 무관하게 모든 차트·타일·표에서 빠진다.
+// 선택은 "무엇을 보는가"이고 범례는 "그중 무엇을 그리는가"다.
+const VIS = () => CX_ORDER.filter(cx => !state.hidden.has(cx));
+const shown = u => state.selected.has(leafKey(u)) && !state.hidden.has(u.cx);
 const unitsFor = (sid, tt) => DATA.units.filter(
-  u => u.sid === sid && u.tt === tt && state.selected.has(leafKey(u)));
+  u => u.sid === sid && u.tt === tt && shown(u));
 
 /* ── DOM 헬퍼 (라벨은 전부 textContent — 데이터는 신뢰하지 않는다) ── */
 function el(tag, cls, text) {
@@ -567,6 +603,8 @@ function renderTiles() {
 /* ── 정합성 ───────────────────────────────────────── */
 const ST = { ok: ["✓", "정상", "st-ok"], wide: ["⚠", "밴드 넓음", "st-wide"],
              missing: ["✕", "수집 누락", "st-missing"], over: ["✕", "로직 오류", "st-over"] };
+// 정합성만은 범례에서 끈 단지도 그대로 보여준다. 이건 시장이 아니라 수집기
+// 상태를 보는 패널이고, 안 보기로 한 단지의 수집 실패를 숨기면 그게 결함이다.
 function renderIntegrity() {
   const box = document.getElementById("integrity");
   const rows = DATA.integrity.filter(r => r.snapshot_id === LATEST);
@@ -658,12 +696,6 @@ const hideTip = () => tipEl.classList.remove("on");
 function renderDots() {
   const legend = document.getElementById("dot-legend");
   legend.replaceChildren();
-  for (const cx of CX_ORDER) {
-    const it = el("div", "item");
-    const d = el("span", "dot"); d.style.background = cxColor(cx);
-    it.append(d, el("span", null, cxName(cx)));
-    legend.append(it);
-  }
   const tr = el("div", "item");
   const rule = el("span", "rule"); rule.style.color = "var(--muted)";
   tr.append(rule, el("span", null, "추세선 (최소제곱)"));
@@ -713,7 +745,7 @@ function dotPlot(units, tt) {
   s.append(svgText(box.l - 8, box.t - 11, "억", { anchor: "end" }));
 
   // 단지별 추세선 — 파선은 "관측이 아니라 적합"이라는 뜻이다
-  for (const cx of CX_ORDER) {
+  for (const cx of VIS()) {
     const g = pts.filter(u => u.cx === cx);
     if (g.length < 3) continue;
     const n = g.length;
@@ -744,7 +776,7 @@ function dotPlot(units, tt) {
   const d0 = dayKey(x0), nDays = Math.round((dayKey(x1) - d0) / DAY) + 1;
   const bucketDays = nDays > 70 ? 7 : 1;         // 기간이 길면 주 단위로 묶는다
   const nbk = Math.max(1, Math.ceil(nDays / bucketDays));
-  const cxs = CX_ORDER.filter(cx => pts.some(u => u.cx === cx));
+  const cxs = VIS().filter(cx => pts.some(u => u.cx === cx));
   const buckets = Array.from({ length: nbk }, () => {
     const m = {}; for (const cx of cxs) m[cx] = { arts: 0, units: 0 }; return m;
   });
@@ -876,12 +908,6 @@ function tipRows(u) {
 function renderHist() {
   const legend = document.getElementById("hist-legend");
   legend.replaceChildren();
-  for (const cx of CX_ORDER) {
-    const it = el("div", "item");
-    const d = el("span", "dot"); d.style.background = cxColor(cx);
-    it.append(d, el("span", null, cxName(cx)));
-    legend.append(it);
-  }
   // 농도는 정체성이 아니라 포함 관계다 — 색을 하나 더 만들지 않고 말로 푼다
   legend.append(el("div", "item", "연한 막대 = 원시 매물 · 진한 막대 = 물건"));
 
@@ -915,7 +941,7 @@ function histPlot(tt) {
   const step = BIN_STEPS.find(v => (hi - lo) / v <= 12) || BIN_STEPS[BIN_STEPS.length - 1];
   const b0 = Math.floor(lo / step) * step;
   const nb = Math.max(1, Math.floor((hi - b0) / step) + 1);
-  const cxs = CX_ORDER.filter(cx => units.some(u => u.cx === cx));
+  const cxs = VIS().filter(cx => units.some(u => u.cx === cx));
 
   // bins[i][cx] = {arts: 원시 매물 수, units: 물건 수}
   const bins = Array.from({ length: nb }, () => {
@@ -1004,7 +1030,7 @@ function renderTrend() {
   if (DATA.snapshots.length < 2) {
     // 점 하나짜리 선 그래프는 차트가 아니라 숫자다 — 숫자로 보여준다
     const grid = el("div", "tiles");
-    for (const tt of ttList()) for (const cx of CX_ORDER) {
+    for (const tt of ttList()) for (const cx of VIS()) {
       const us = unitsFor(LATEST, tt).filter(u => u.cx === cx);
       if (!us.length) continue;
       const lo = us.length, hi = us.reduce((a, u) => a + u.ng, 0);
@@ -1021,12 +1047,7 @@ function renderTrend() {
     return;
   }
 
-  for (const cx of CX_ORDER) {
-    const it = el("div", "item");
-    const d = el("span", "dot"); d.style.background = cxColor(cx);
-    it.append(d, el("span", null, cxName(cx) + " (하한~상한 밴드)"));
-    legend.append(it);
-  }
+  legend.append(el("div", "item", "단지마다 띠 하나 — 아래가 하한, 위가 상한"));
   for (const tt of ttList()) {
     const facet = el("div");
     if (ttList().length > 1) facet.append(el("div", "facet-title", TT_LABEL[tt]));
@@ -1044,11 +1065,11 @@ function trendPlot(tt) {
 
   // 안 훑은 조사일은 0이 아니라 값이 없는 것이다. 0으로 이으면
   // 단지를 추가한 날 물량이 0에서 솟은 것처럼 보인다.
-  const series = CX_ORDER.map(cx => ({
+  const series = VIS().map(cx => ({
     cx, pts: DATA.snapshots.map((sn, i) => {
       if (!covered(sn.id, cx)) return null;
       const us = DATA.units.filter(u => u.sid === sn.id && u.tt === tt && u.cx === cx
-                                        && state.selected.has(leafKey(u)));
+                                        && shown(u));
       return { i, sid: sn.id, at: sn.at, lo: us.length, hi: us.reduce((a, u) => a + u.ng, 0) };
     }).filter(Boolean)
   })).filter(g => g.pts.some(p => p.hi > 0));
@@ -1262,12 +1283,7 @@ function renderQuartiles() {
     box.append(el("div", "empty", "조사일이 1개라 호가 추이를 그릴 수 없습니다. 다음 조사 후 표시됩니다."));
     return;
   }
-  for (const cx of CX_ORDER) {
-    const it = el("div", "item");
-    const d = el("span", "dot"); d.style.background = cxColor(cx);
-    it.append(d, el("span", null, cxName(cx) + " (중앙값 · 25~75%)"));
-    legend.append(it);
-  }
+  legend.append(el("div", "item", "단지마다 선 = 중앙값, 띠 = 25~75% 구간"));
   for (const tt of ttList()) {
     const facet = el("div");
     if (ttList().length > 1) facet.append(el("div", "facet-title", TT_LABEL[tt]));
@@ -1283,10 +1299,10 @@ function quartilePlot(tt) {
   const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
   s.setAttribute("aria-label", `${TT_LABEL[tt]} 조사일별 호가`);
 
-  const series = CX_ORDER.map(cx => ({
+  const series = VIS().map(cx => ({
     cx, pts: DATA.snapshots.map((sn, i) => {
       const ps = DATA.units.filter(u => u.sid === sn.id && u.tt === tt && u.cx === cx
-                                        && u.p != null && state.selected.has(leafKey(u)))
+                                        && u.p != null && shown(u))
                            .map(u => u.p).sort((a, b) => a - b);
       return { i, n: ps.length, q1: quantile(ps, .25), med: quantile(ps, .5), q3: quantile(ps, .75) };
     })
@@ -1368,12 +1384,6 @@ function renderFlow() {
     box.append(el("div", "empty", "조사일이 1개라 증감을 낼 수 없습니다. 다음 조사 후 표시됩니다."));
     return;
   }
-  for (const cx of CX_ORDER) {
-    const it = el("div", "item");
-    const d = el("span", "dot"); d.style.background = cxColor(cx);
-    it.append(d, el("span", null, cxName(cx)));
-    legend.append(it);
-  }
   for (const [op, label] of [[1, "신규 (위)"], [.42, "소멸 (아래)"]]) {
     const it = el("div", "item");
     const d = el("span", "dot");
@@ -1399,15 +1409,15 @@ function flowPlot(tt) {
   const ivs = [];
   for (let i = 1; i < DATA.snapshots.length; i++) {
     const f = flowAt(i, tt);
-    const per = new Map(CX_ORDER.map(cx => [cx, {
+    const per = new Map(VIS().map(cx => [cx, {
       neu: f.neu.filter(u => u.cx === cx).length,
       gone: f.gone.filter(u => u.cx === cx).length,
       enter: f.enter.filter(u => u.cx === cx).length }]));
     ivs.push({ i, per });
   }
-  const cxs = CX_ORDER.filter(cx => ivs.some(v => {
+  const cxs = VIS().filter(cx => ivs.some(v => {
     const q = v.per.get(cx); return q.neu || q.gone; }));
-  const entered = ivs.flatMap(v => CX_ORDER.map(cx => ({ i: v.i, cx, n: v.per.get(cx).enter }))
+  const entered = ivs.flatMap(v => VIS().map(cx => ({ i: v.i, cx, n: v.per.get(cx).enter }))
                                            .filter(x => x.n));
 
   if (!cxs.length) {
@@ -1474,11 +1484,45 @@ function enterNote(entered) {
   return n;
 }
 
+/* ── 단지 범례 (화면 전체에 하나) ─────────────────── */
+// 색은 단지의 이름이다. 그러니 범례도 하나여야 하고, 그 하나가 켜고 끄는
+// 스위치를 겸한다. 옆의 건수는 지금 선택된 평형 기준 최신 조사일 물건 수다 —
+// 껐을 때도 그대로 보여야 "무엇을 도로 켜는지" 알 수 있다.
+function renderCxBar() {
+  const bar = document.getElementById("cxbar");
+  bar.replaceChildren(el("span", "lbl", "단지"));
+  for (const cx of CX_ORDER) {
+    const on = !state.hidden.has(cx);
+    const n = DATA.units.filter(u => u.sid === LATEST && ttList().includes(u.tt)
+                                     && u.cx === cx && state.selected.has(leafKey(u))).length;
+    const b = el("button");
+    b.type = "button";
+    b.dataset.cx = cx;
+    b.setAttribute("aria-pressed", String(on));
+    b.title = on ? `${cxName(cx)} 숨기기` : `${cxName(cx)} 표시`;
+    b.style.color = on ? cxColor(cx) : "";
+    const sw = el("span", "sw");
+    const nm = el("span", "nm", cxName(cx));
+    nm.style.color = on ? "var(--text-primary)" : "inherit";
+    b.append(sw, nm, el("span", "cnt", String(n)));
+    bar.append(b);
+  }
+}
+
 /* ── 배선 ─────────────────────────────────────────── */
 function renderAll() {
+  renderCxBar();
   renderTree(); renderTiles(); renderIntegrity();
   renderDots(); renderHist(); renderTrend(); renderQuartiles(); renderFlow(); renderTable();
 }
+
+document.getElementById("cxbar").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-cx]");
+  if (!b) return;
+  const cx = b.dataset.cx;
+  state.hidden.has(cx) ? state.hidden.delete(cx) : state.hidden.add(cx);
+  save(); renderAll();
+});
 
 document.getElementById("tt").addEventListener("click", ev => {
   const b = ev.target.closest("button[data-tt]");
