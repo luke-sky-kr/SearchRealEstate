@@ -75,6 +75,15 @@ def build(db=DB):
     pyeong = {rep: round(statistics.median(v) / PYEONG_M2)
               for rep, v in supply_by_rep.items()}
 
+    # 조사일을 가로지르는 물건 식별자. 이게 있어야 신규/소멸을 조사일 축에서 셀 수 있다.
+    uid = {(r["snapshot_id"], r["group_key"]): r["unit_id"]
+           for r in con.execute("SELECT snapshot_id, group_key, unit_id FROM unit_links")}
+    # 조사일마다 실제로 훑은 단지. 단지를 추가/제외한 것을 신규/소멸로 착각하면 안 된다.
+    coverage = defaultdict(list)
+    for r in con.execute("""SELECT snapshot_id, complex_no FROM raw_articles
+                            GROUP BY snapshot_id, complex_no ORDER BY 1, 2"""):
+        coverage[r["snapshot_id"]].append(r["complex_no"])
+
     groups = defaultdict(list)
     for a in arts:
         groups[(a["snapshot_id"], a["group_key"])].append(a)
@@ -87,7 +96,7 @@ def build(db=DB):
         expo = sorted(m["exposure_date"] for m in members if m["exposure_date"])
         conf = sorted(m["confirmed_date"] for m in members if m["confirmed_date"])
         units.append({
-            "sid": sid, "gk": gk,
+            "sid": sid, "gk": gk, "uid": uid.get((sid, gk)),
             "cx": lead["complex_no"], "tt": lead["trade_type"],
             "dong": lead["building"] or "미상",
             "pk": round(rep_area, 1) if rep_area else 0,      # 평형 군집 키
@@ -119,6 +128,7 @@ def build(db=DB):
         "generated_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
         "complexes": names,
         "snapshots": snapshots,
+        "coverage": {str(k): v for k, v in coverage.items()},
         "units": units,
         "integrity": integrity,
         "pyeongByKey": {str(round(k, 1)): v for k, v in pyeong.items()},

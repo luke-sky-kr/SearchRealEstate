@@ -19,6 +19,7 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
+  --series-4: #8256c9;
   --good: #0ca30c;
   --warning: #fab219;
   --serious: #ec835a;
@@ -41,6 +42,7 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
+    --series-4: #a07ae8;
     --delta-up: #0ca30c;
   }
 }
@@ -58,6 +60,7 @@
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
+  --series-4: #a07ae8;
   --delta-up: #0ca30c;
 }
 
@@ -240,7 +243,7 @@ td.desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-spa
 
     <section class="card">
       <header><h2>호가와 등록 추이</h2></header>
-      <div class="sub">두 패널이 등록일 축 하나를 공유한다. <b>위</b> — 점 1개 = 물건 1개(중복 등록을 묶은 단위), 세로축은 그룹 최저 호가, 파선은 최소제곱 추세선. <b>아래</b> — 같은 날짜에 등록된 매물 수. 스냅샷이 1개라 여기 보이는 것은 <b>지금 살아 있는 매물</b>뿐이다. 이미 팔리거나 내린 매물은 빠져 있어 과거로 갈수록 실제보다 적게 보이므로, 오른쪽 끝의 증가는 유입이 늘어난 것일 수도 있고 아직 소진되지 않은 것일 수도 있다. 소멸까지 반영한 순증감은 스냅샷이 2개 이상일 때 아래 물량 추이에서 볼 수 있다.</div>
+      <div class="sub">두 패널이 등록일 축 하나를 공유한다. <b>위</b> — 점 1개 = 물건 1개(중복 등록을 묶은 단위), 세로축은 그룹 최저 호가, 파선은 최소제곱 추세선. <b>아래</b> — 같은 날짜에 등록된 매물 수. 여기 보이는 것은 <b>최신 조사일에 살아 있던 매물</b>뿐이다. 이미 팔리거나 내린 매물은 빠져 있어 과거로 갈수록 실제보다 적게 보이므로, 오른쪽 끝의 증가는 유입이 늘어난 것일 수도 있고 아직 소진되지 않은 것일 수도 있다. 소멸까지 반영한 진짜 증감은 등록일이 아니라 <b>조사일</b> 축에서만 나온다 — 아래 조사일별 호가·증감을 보라.</div>
       <div class="legend" id="dot-legend"></div>
       <div class="facets" id="dot-facets"></div>
     </section>
@@ -257,6 +260,22 @@ td.desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-spa
       <div class="sub">물량은 단일 수치가 아니라 밴드다 — 하한은 자체 2차 병합, 상한은 네이버 동일매물묶기.</div>
       <div class="legend" id="trend-legend"></div>
       <div class="facets" id="trend-facets"></div>
+    </section>
+
+    <section class="card">
+      <header><h2>조사일별 호가</h2></header>
+      <div class="sub">조사일마다 그때 살아 있던 물건만으로 낸 중앙값과 사분위 구간.
+        등록일 축과 달리 팔려서 사라진 물건이 빠진 뒤의 값이라, 호가가 실제로 움직였는지는 여기서만 보인다.</div>
+      <div class="legend" id="qt-legend"></div>
+      <div class="facets" id="qt-facets"></div>
+    </section>
+
+    <section class="card">
+      <header><h2>조사일별 증감</h2></header>
+      <div class="sub">직전 조사일에 견준 신규(위)와 소멸(아래). 단지를 새로 넣은 조사일의
+        편입 물량은 시장 변화가 아니므로 막대에서 빼고 아래에 따로 적는다.</div>
+      <div class="legend" id="flow-legend"></div>
+      <div class="facets" id="flow-facets"></div>
     </section>
 
     <section class="card">
@@ -278,7 +297,7 @@ const STORE = "naver-monitor-dashboard-v1";
 /* ── 색: 단지가 곧 색이다. 필터를 바꿔도 단지 색은 그대로다. ── */
 const CX_ORDER = Object.keys(DATA.complexes).sort(
   (a, b) => (DATA.complexes[a] || "").localeCompare(DATA.complexes[b], "ko"));
-const SERIES_SLOTS = ["--series-1", "--series-2", "--series-3"];
+const SERIES_SLOTS = ["--series-1", "--series-2", "--series-3", "--series-4"];
 const cxColor = cx => {
   const i = CX_ORDER.indexOf(cx);
   return `var(${SERIES_SLOTS[i] ?? "--muted"})`;
@@ -288,6 +307,15 @@ const TT_LABEL = { A1: "매매", B1: "전세", B2: "월세", B3: "단기" };
 
 const LATEST = DATA.snapshots.length ? DATA.snapshots[DATA.snapshots.length - 1].id : null;
 const PREV = DATA.snapshots.length > 1 ? DATA.snapshots[DATA.snapshots.length - 2].id : null;
+
+// 하루에 두 번 조사하는 날이 있다. 날짜가 겹칠 때만 시각을 붙인다.
+const SNAP_DAYS = DATA.snapshots.map(s => s.at.slice(0, 10));
+const snapLabel = i => (SNAP_DAYS.filter(d => d === SNAP_DAYS[i]).length > 1
+  ? SNAP_DAYS[i].slice(5) + " " + DATA.snapshots[i].at.slice(11, 16)
+  : SNAP_DAYS[i].slice(5));
+const snapFull = i => DATA.snapshots[i].at.replace("T", " ").slice(0, 16);
+// 그 조사일에 이 단지를 실제로 훑었는가. 안 훑은 날은 0이 아니라 '없음'이다.
+const covered = (sid, cx) => (DATA.coverage[sid] || []).includes(cx);
 
 const eok = v => (v == null ? "—" : (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1) + "억");
 const num = v => (v == null ? "—" : v.toLocaleString("ko-KR"));
@@ -339,8 +367,26 @@ function leavesUnder(node) {
 }
 
 /* ── 상태 ─────────────────────────────────────────── */
-const defaultSelection = () => new Set(
-  [...LEAVES].filter(([, v]) => v.py >= 30 && v.py <= 39).map(([k]) => k));
+// 기본은 30평대다. 다만 30평대가 아예 없는 단지도 있어서(LG한강자이 등),
+// 그럴 땐 그 단지에서 물건이 가장 많은 평형으로 채운다. 안 그러면 단지를
+// 새로 추가해도 첫 화면에서 통째로 사라진다.
+function defaultSelection() {
+  const out = new Set();
+  for (const cx of CX_ORDER) {
+    const mine = [...LEAVES].filter(([, v]) => v.cx === cx);
+    const std = mine.filter(([, v]) => v.py >= 30 && v.py <= 39);
+    if (std.length) { for (const [k] of std) out.add(k); continue; }
+    const byPy = new Map();
+    for (const [k, v] of mine) {
+      if (!byPy.has(v.py)) byPy.set(v.py, { n: 0, keys: [] });
+      const e = byPy.get(v.py); e.n += v.n; e.keys.push(k);
+    }
+    let best = null;
+    for (const e of byPy.values()) if (!best || e.n > best.n) best = e;
+    if (best) for (const k of best.keys) out.add(k);
+  }
+  return out;
+}
 
 let state = { tt: "A1", selected: defaultSelection(), open: new Set(TREE.map(n => n.id)),
               sort: { key: "p", dir: -1 } };
@@ -356,6 +402,16 @@ try {
     if (Array.isArray(saved.open)) state.open = new Set(saved.open);
   }
 } catch (e) { /* 저장값이 깨졌으면 기본값으로 간다 */ }
+
+// 단지를 새로 추가하면 저장된 선택에 그 단지 잎이 하나도 없다. 그대로 두면
+// 새 단지가 화면에서 빠진 채로 열린다 — 기본 선택분만 채워 넣는다.
+{
+  const dflt = defaultSelection();
+  for (const cx of CX_ORDER) {
+    if ([...state.selected].some(k => LEAVES.get(k)?.cx === cx)) continue;
+    for (const k of dflt) if (LEAVES.get(k).cx === cx) state.selected.add(k);
+  }
+}
 
 const save = () => {
   try {
@@ -931,7 +987,7 @@ function renderTrend() {
       grid.append(t);
     }
     box.append(grid);
-    box.append(el("div", "empty", "스냅샷이 1개라 추이를 그릴 수 없습니다. 다음 수집 후 표시됩니다."));
+    box.append(el("div", "empty", "조사일이 1개라 추이를 그릴 수 없습니다. 다음 조사 후 표시됩니다."));
     return;
   }
 
@@ -956,12 +1012,15 @@ function trendPlot(tt) {
   const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
   s.setAttribute("aria-label", `${TT_LABEL[tt]} 물량 추이`);
 
+  // 안 훑은 조사일은 0이 아니라 값이 없는 것이다. 0으로 이으면
+  // 단지를 추가한 날 물량이 0에서 솟은 것처럼 보인다.
   const series = CX_ORDER.map(cx => ({
-    cx, pts: DATA.snapshots.map(sn => {
+    cx, pts: DATA.snapshots.map((sn, i) => {
+      if (!covered(sn.id, cx)) return null;
       const us = DATA.units.filter(u => u.sid === sn.id && u.tt === tt && u.cx === cx
                                         && state.selected.has(leafKey(u)));
-      return { sid: sn.id, at: sn.at, lo: us.length, hi: us.reduce((a, u) => a + u.ng, 0) };
-    })
+      return { i, sid: sn.id, at: sn.at, lo: us.length, hi: us.reduce((a, u) => a + u.ng, 0) };
+    }).filter(Boolean)
   })).filter(g => g.pts.some(p => p.hi > 0));
 
   if (!series.length) { wrap.append(el("div", "empty", "선택된 물건이 없습니다.")); return wrap; }
@@ -976,23 +1035,30 @@ function trendPlot(tt) {
   s.append(svgText(box.l - 8, box.t - 11, "건", { anchor: "end" }));
   DATA.snapshots.forEach((sn, i) => {
     if (n > 8 && i % Math.ceil(n / 8) !== 0 && i !== n - 1) return;
-    s.append(svgText(X(i), box.t + box.h + 18, sn.at.slice(5, 10), { tabular: true }));
+    s.append(svgText(X(i), box.t + box.h + 18, snapLabel(i), { tabular: true }));
   });
 
   for (const g of series) {
     const col = cxColor(g.cx);
-    const up = g.pts.map((p, i) => `${X(i)},${Y(p.hi)}`);
-    const dn = g.pts.map((p, i) => `${X(i)},${Y(p.lo)}`).reverse();
-    s.append(svg("polygon", { points: [...up, ...dn].join(" "), fill: col, opacity: .10 }));
-    for (const key of ["hi", "lo"]) {
-      s.append(svg("polyline", { points: g.pts.map((p, i) => `${X(i)},${Y(p[key])}`).join(" "),
-        fill: "none", stroke: col, "stroke-width": 2,
-        "stroke-linejoin": "round", "stroke-linecap": "round", opacity: key === "hi" ? .55 : 1 }));
+    const up = g.pts.map(p => `${X(p.i)},${Y(p.hi)}`);
+    const dn = g.pts.map(p => `${X(p.i)},${Y(p.lo)}`).reverse();
+    if (g.pts.length > 1) {
+      s.append(svg("polygon", { points: [...up, ...dn].join(" "), fill: col, opacity: .10 }));
+      for (const key of ["hi", "lo"]) {
+        s.append(svg("polyline", { points: g.pts.map(p => `${X(p.i)},${Y(p[key])}`).join(" "),
+          fill: "none", stroke: col, "stroke-width": 2,
+          "stroke-linejoin": "round", "stroke-linecap": "round", opacity: key === "hi" ? .55 : 1 }));
+      }
+    } else {
+      // 조사일이 하나뿐인 단지 — 선 대신 밴드를 세로 막대로 세운다
+      const p = g.pts[0];
+      s.append(svg("line", { x1: X(p.i), x2: X(p.i), y1: Y(p.hi), y2: Y(p.lo),
+        stroke: col, "stroke-width": 3, opacity: .5, "stroke-linecap": "round" }));
     }
     const last = g.pts[g.pts.length - 1];
-    s.append(svg("circle", { cx: X(n - 1), cy: Y(last.lo), r: 4.5, fill: col,
+    s.append(svg("circle", { cx: X(last.i), cy: Y(last.lo), r: 4.5, fill: col,
       stroke: "var(--surface-1)", "stroke-width": 2 }));
-    s.append(svgText(X(n - 1) + 9, Y(last.lo) + 4, `${last.lo}–${last.hi}`,
+    s.append(svgText(X(last.i) + 9, Y(last.lo) + 4, `${last.lo}–${last.hi}`,
       { anchor: "start", fill: "var(--text-secondary)", tabular: true }));
   }
 
@@ -1009,11 +1075,12 @@ function trendPlot(tt) {
     for (let j = 0; j < n; j++) { const d = Math.abs(X(j) - px); if (d < bd) { bd = d; i = j; } }
     cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("opacity", .8);
     showTip(ev.clientX, ev.clientY, () => {
-      const out = [el("div", "v", DATA.snapshots[i].at.replace("T", " ").slice(0, 16))];
+      const out = [el("div", "v", snapFull(i))];
       for (const g of series) {
-        const p = g.pts[i], row = el("div", "r");
+        const p = g.pts.find(q => q.i === i), row = el("div", "r");
         const k2 = el("span", "k"); k2.style.color = cxColor(g.cx);
-        row.append(k2, el("span", null, `${cxName(g.cx)} ${p.lo}–${p.hi}건`));
+        row.append(k2, el("span", null, p ? `${cxName(g.cx)} ${p.lo}–${p.hi}건`
+                                          : `${cxName(g.cx)} 이 날은 조사 안 함`));
         out.push(row);
       }
       return out;
@@ -1025,24 +1092,43 @@ function trendPlot(tt) {
   return wrap;
 }
 
-/* ── 스냅샷 간 물건 매칭 (Δ호가 · 신규 · 소멸) ────── */
-function matchPrev(tt) {
-  const cur = unitsFor(LATEST, tt);
-  if (PREV == null) return { delta: new Map(), gone: [] };
-  const prev = DATA.units.filter(u => u.sid === PREV && u.tt === tt && state.selected.has(leafKey(u)));
-  const byArt = new Map();
-  for (const p of prev) for (const a of p.arts) byArt.set(a, p);
-  const byKey = new Map();
-  for (const p of prev) byKey.set(leafKey(p) + "\u001f" + p.dir + "\u001f" + p.fi, p);
-  const delta = new Map(), used = new Set();
-  for (const u of cur) {
-    // 매물번호가 하나라도 겹치면 같은 물건으로 본다. 없으면 물건 키로 떨어진다.
-    let m = u.arts.map(a => byArt.get(a)).find(Boolean)
-         || byKey.get(leafKey(u) + "\u001f" + u.dir + "\u001f" + u.fi);
-    if (m) { used.add(m.gk); delta.set(u.gk, u.p - m.p); }
+/* ── 조사일 간 흐름 (Δ호가 · 신규 · 소멸 · 편입) ──────────
+   매칭을 여기서 다시 계산하지 않는다. link_snapshots.py가 조사일을 가로질러
+   이미 unit_id를 매겨 두었고, 그게 유일한 정답이어야 한다.
+   단지를 새로 넣거나 뺀 조사일에는 그 단지 물건이 통째로 신규/소멸로 보이는데
+   그건 시장이 아니라 조사 범위가 바뀐 것이다. coverage로 갈라낸다. */
+
+function flowAt(i, tt) {
+  const sid = DATA.snapshots[i].id;
+  const cur = unitsFor(sid, tt);
+  const out = { sid, cur, prev: [], kept: [], neu: [], gone: [], enter: [],
+                delta: new Map(), tag: new Map() };
+  if (i === 0) {
+    for (const u of cur) out.tag.set(u.gk, "base");
+    return out;
   }
-  return { delta, gone: prev.filter(p => !used.has(p.gk)) };
+  const pid = DATA.snapshots[i - 1].id;
+  out.prev = unitsFor(pid, tt);
+  const pmap = new Map(out.prev.map(u => [u.uid, u]));
+  const alive = new Set(cur.map(u => u.uid));
+  for (const u of cur) {
+    const m = u.uid == null ? null : pmap.get(u.uid);
+    if (m) {
+      out.kept.push(u);
+      out.tag.set(u.gk, "kept");
+      if (u.p != null && m.p != null) out.delta.set(u.gk, u.p - m.p);
+    } else if (covered(pid, u.cx)) {
+      out.neu.push(u); out.tag.set(u.gk, "new");
+    } else {
+      out.enter.push(u); out.tag.set(u.gk, "enter");   // 조사 편입 — 신규가 아니다
+    }
+  }
+  // 이번 조사에서 안 훑은 단지의 물건은 사라진 게 아니라 안 본 것이다
+  out.gone = out.prev.filter(u => !alive.has(u.uid) && covered(sid, u.cx));
+  return out;
 }
+
+const LAST_I = DATA.snapshots.length - 1;
 
 /* ── 물건 테이블 (차트의 표 대응물이기도 하다) ────── */
 const COLS = [
@@ -1067,9 +1153,9 @@ function renderTable() {
   const rows = [];
   let gone = [];
   for (const tt of tts) {
-    const { delta, gone: g } = matchPrev(tt);
-    gone = gone.concat(g);
-    for (const u of unitsFor(LATEST, tt)) rows.push({ u, d: delta.get(u.gk) });
+    const f = flowAt(LAST_I, tt);
+    gone = gone.concat(f.gone);
+    for (const u of f.cur) rows.push({ u, d: f.delta.get(u.gk), tag: f.tag.get(u.gk) });
   }
   if (!rows.length) { host.replaceChildren(el("div", "empty", "선택된 물건이 없습니다.")); return; }
 
@@ -1098,7 +1184,8 @@ function renderTable() {
   }
   thead.append(htr);
   const tbody = document.createElement("tbody");
-  for (const { u, d } of rows) {
+  const TAG_LABEL = { base: "—", new: "신규", enter: "편입", kept: "—" };
+  for (const { u, d, tag } of rows) {
     const tr = document.createElement("tr");
     for (const c of COLS) {
       const td = el("td", [c.l ? "l" : "", c.cls || ""].join(" ").trim() || null);
@@ -1106,7 +1193,7 @@ function renderTable() {
         const sw = el("span", "swatch"); sw.style.background = cxColor(u.cx);
         td.append(sw, document.createTextNode(cxName(u.cx)));
       } else if (c.k === "delta") {
-        if (d == null) td.append(el("span", "tag", PREV == null ? "—" : "신규"));
+        if (d == null) td.append(el("span", "tag", TAG_LABEL[tag] || "—"));
         else if (d === 0) td.textContent = "0";
         else {
           const sp = el("span", d > 0 ? "up" : "down", (d > 0 ? "+" : "") + (d / 10000).toFixed(1) + "억");
@@ -1122,16 +1209,244 @@ function renderTable() {
   host.replaceChildren(table);
 
   if (gone.length) {
-    const note = el("div", "sub", `직전 스냅샷 대비 사라진 물건 ${gone.length}건`);
+    const note = el("div", "sub", `직전 조사일 대비 사라진 물건 ${gone.length}건`);
     note.style.marginTop = "10px";
     host.append(note);
   }
 }
 
+/* ── 차트 4: 조사일별 호가 (중앙값 + 사분위 구간) ──────
+   조사일 축에서만 소멸이 관측되므로, 호가가 정말 움직였는지는 여기서만 나온다. */
+function quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+function renderQuartiles() {
+  const legend = document.getElementById("qt-legend");
+  const box = document.getElementById("qt-facets");
+  legend.replaceChildren(); box.replaceChildren();
+  if (DATA.snapshots.length < 2) {
+    box.append(el("div", "empty", "조사일이 1개라 호가 추이를 그릴 수 없습니다. 다음 조사 후 표시됩니다."));
+    return;
+  }
+  for (const cx of CX_ORDER) {
+    const it = el("div", "item");
+    const d = el("span", "dot"); d.style.background = cxColor(cx);
+    it.append(d, el("span", null, cxName(cx) + " (중앙값 · 25~75%)"));
+    legend.append(it);
+  }
+  for (const tt of ttList()) {
+    const facet = el("div");
+    if (ttList().length > 1) facet.append(el("div", "facet-title", TT_LABEL[tt]));
+    facet.append(quartilePlot(tt));
+    box.append(facet);
+  }
+}
+
+function quartilePlot(tt) {
+  const wrap = el("div", "plot");
+  const W = Math.max(360, (document.querySelector("main")?.clientWidth || 900) - 38);
+  const H = 268, box = { l: 56, t: 22, w: W - 72, h: H - 62 };
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
+  s.setAttribute("aria-label", `${TT_LABEL[tt]} 조사일별 호가`);
+
+  const series = CX_ORDER.map(cx => ({
+    cx, pts: DATA.snapshots.map((sn, i) => {
+      const ps = DATA.units.filter(u => u.sid === sn.id && u.tt === tt && u.cx === cx
+                                        && u.p != null && state.selected.has(leafKey(u)))
+                           .map(u => u.p).sort((a, b) => a - b);
+      return { i, n: ps.length, q1: quantile(ps, .25), med: quantile(ps, .5), q3: quantile(ps, .75) };
+    })
+  })).filter(g => g.pts.some(p => p.n));
+
+  if (!series.length) { wrap.append(el("div", "empty", "선택된 물건이 없습니다.")); return wrap; }
+
+  const vals = series.flatMap(g => g.pts.filter(p => p.n).flatMap(p => [p.q1, p.q3]));
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = (hi - lo) * .15 || Math.max(hi * .05, 1);
+  const y0 = lo - pad, y1 = hi + pad;
+  const n = DATA.snapshots.length;
+  const X = i => box.l + (n === 1 ? box.w / 2 : (i / (n - 1)) * box.w);
+  const Y = v => box.t + box.h - (v - y0) / (y1 - y0) * box.h;
+
+  frame(s, box, niceTicks(y0, y1, 4), Y, t => (t / 10000).toFixed(1));
+  s.append(svgText(box.l - 8, box.t - 11, "억", { anchor: "end" }));
+  DATA.snapshots.forEach((sn, i) => {
+    if (n > 8 && i % Math.ceil(n / 8) !== 0 && i !== n - 1) return;
+    s.append(svgText(X(i), box.t + box.h + 18, snapLabel(i), { tabular: true }));
+  });
+
+  for (const g of series) {
+    const col = cxColor(g.cx), pts = g.pts.filter(p => p.n);
+    if (!pts.length) continue;
+    const up = pts.map(p => `${X(p.i)},${Y(p.q3)}`);
+    const dn = pts.map(p => `${X(p.i)},${Y(p.q1)}`).reverse();
+    s.append(svg("polygon", { points: [...up, ...dn].join(" "), fill: col, opacity: .12 }));
+    s.append(svg("polyline", { points: pts.map(p => `${X(p.i)},${Y(p.med)}`).join(" "),
+      fill: "none", stroke: col, "stroke-width": 2,
+      "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    for (const p of pts)
+      s.append(svg("circle", { cx: X(p.i), cy: Y(p.med), r: 3.5, fill: col,
+        stroke: "var(--surface-1)", "stroke-width": 1.5 }));
+    const last = pts[pts.length - 1];
+    s.append(svgText(X(last.i) + 9, Y(last.med) + 4, eok(Math.round(last.med)),
+      { anchor: "start", fill: "var(--text-secondary)", tabular: true }));
+  }
+
+  const cross = svg("line", { y1: box.t, y2: box.t + box.h, stroke: "var(--axis)",
+    "stroke-width": 1, opacity: 0 });
+  s.append(cross);
+  const overlay = svg("rect", { x: box.l, y: box.t, width: box.w, height: box.h, fill: "transparent" });
+  s.append(overlay);
+  overlay.addEventListener("pointermove", ev => {
+    const r = s.getBoundingClientRect(), k = W / r.width;
+    const px = (ev.clientX - r.left) * k;
+    let i = 0, bd = Infinity;
+    for (let j = 0; j < n; j++) { const d = Math.abs(X(j) - px); if (d < bd) { bd = d; i = j; } }
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("opacity", .8);
+    showTip(ev.clientX, ev.clientY, () => {
+      const out = [el("div", "v", snapFull(i))];
+      for (const g of series) {
+        const p = g.pts[i];
+        if (!p.n) continue;
+        const row = el("div", "r");
+        const k2 = el("span", "k"); k2.style.color = cxColor(g.cx);
+        row.append(k2, el("span", null,
+          `${cxName(g.cx)} 중앙 ${eok(Math.round(p.med))} (${eok(Math.round(p.q1))}~${eok(Math.round(p.q3))}, ${p.n}건)`));
+        out.push(row);
+      }
+      return out;
+    });
+  });
+  overlay.addEventListener("pointerleave", () => { cross.setAttribute("opacity", 0); hideTip(); });
+
+  wrap.append(s);
+  return wrap;
+}
+
+/* ── 차트 5: 조사일별 증감 (신규 위 / 소멸 아래) ────────
+   색은 단지를 따라간다. 신규와 소멸은 한 색조의 두 명도로 가른다 —
+   여기에 색을 하나 더 쓰면 단지 색과 부딪힌다. */
+function renderFlow() {
+  const legend = document.getElementById("flow-legend");
+  const box = document.getElementById("flow-facets");
+  legend.replaceChildren(); box.replaceChildren();
+  if (DATA.snapshots.length < 2) {
+    box.append(el("div", "empty", "조사일이 1개라 증감을 낼 수 없습니다. 다음 조사 후 표시됩니다."));
+    return;
+  }
+  for (const cx of CX_ORDER) {
+    const it = el("div", "item");
+    const d = el("span", "dot"); d.style.background = cxColor(cx);
+    it.append(d, el("span", null, cxName(cx)));
+    legend.append(it);
+  }
+  for (const [op, label] of [[1, "신규 (위)"], [.42, "소멸 (아래)"]]) {
+    const it = el("div", "item");
+    const d = el("span", "dot");
+    d.style.cssText = `background:var(--text-secondary);border-radius:2px;opacity:${op}`;
+    it.append(d, el("span", null, label));
+    legend.append(it);
+  }
+  for (const tt of ttList()) {
+    const facet = el("div");
+    if (ttList().length > 1) facet.append(el("div", "facet-title", TT_LABEL[tt]));
+    facet.append(flowPlot(tt));
+    box.append(facet);
+  }
+}
+
+function flowPlot(tt) {
+  const wrap = el("div", "plot");
+  const W = Math.max(360, (document.querySelector("main")?.clientWidth || 900) - 38);
+  const H = 236, box = { l: 52, t: 20, w: W - 68, h: H - 58 };
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
+  s.setAttribute("aria-label", `${TT_LABEL[tt]} 조사일별 신규·소멸`);
+
+  const ivs = [];
+  for (let i = 1; i < DATA.snapshots.length; i++) {
+    const f = flowAt(i, tt);
+    const per = new Map(CX_ORDER.map(cx => [cx, {
+      neu: f.neu.filter(u => u.cx === cx).length,
+      gone: f.gone.filter(u => u.cx === cx).length,
+      enter: f.enter.filter(u => u.cx === cx).length }]));
+    ivs.push({ i, per });
+  }
+  const cxs = CX_ORDER.filter(cx => ivs.some(v => {
+    const q = v.per.get(cx); return q.neu || q.gone; }));
+  const entered = ivs.flatMap(v => CX_ORDER.map(cx => ({ i: v.i, cx, n: v.per.get(cx).enter }))
+                                           .filter(x => x.n));
+
+  if (!cxs.length) {
+    wrap.append(el("div", "empty", "이 구간에는 신규도 소멸도 없습니다."));
+    if (entered.length) wrap.append(enterNote(entered));
+    return wrap;
+  }
+
+  const maxV = Math.max(1, ...ivs.flatMap(v => cxs.flatMap(cx =>
+    [v.per.get(cx).neu, v.per.get(cx).gone])));
+  const sc = axisScale(maxV, 3);
+  const mid = box.t + box.h / 2;
+  const Y = v => mid - (v / sc.top) * (box.h / 2);
+  frame(s, box, sc.ticks.filter(t => t > 0).flatMap(t => [t, -t]).concat([0]), Y,
+        t => String(Math.abs(Math.round(t))));
+  s.append(svg("line", { x1: box.l, x2: box.l + box.w, y1: mid, y2: mid,
+                         stroke: "var(--axis)", "stroke-width": 1 }));
+  s.append(svgText(box.l - 8, box.t - 9, "건", { anchor: "end" }));
+
+  const slot = box.w / ivs.length;
+  const bw = Math.min(24, Math.max(6, (slot * .74) / cxs.length - 2));
+  ivs.forEach((v, k) => {
+    const c0 = box.l + slot * (k + .5) - (bw + 2) * cxs.length / 2;
+    cxs.forEach((cx, j) => {
+      const q = v.per.get(cx), x = c0 + (bw + 2) * j, col = cxColor(cx);
+      for (const [val, up, op] of [[q.neu, true, 1], [q.gone, false, .42]]) {
+        if (!val) continue;
+        const h = Math.abs(Y(val) - mid);
+        const d = up ? barPath(x, Y(val), bw, h, 3) : barPath(x, mid, bw, h, 3);
+        const path = svg("path", { d, fill: col, opacity: op });
+        if (!up) path.setAttribute("transform", `rotate(180 ${x + bw / 2} ${mid + h / 2})`);
+        s.append(path);
+      }
+    });
+    s.append(svgText(box.l + slot * (k + .5), box.t + box.h + 17,
+      `${snapLabel(v.i - 1)} → ${snapLabel(v.i)}`, { tabular: true }));
+
+    const hit = svg("rect", { x: box.l + slot * k, y: box.t, width: slot, height: box.h,
+                              fill: "transparent" });
+    s.append(hit);
+    hit.addEventListener("pointermove", ev => showTip(ev.clientX, ev.clientY, () => {
+      const out = [el("div", "v", `${snapFull(v.i - 1)} → ${snapFull(v.i)}`)];
+      for (const cx of cxs) {
+        const q = v.per.get(cx), net = q.neu - q.gone, row = el("div", "r");
+        const k2 = el("span", "k"); k2.style.color = cxColor(cx);
+        row.append(k2, el("span", null, `${cxName(cx)} 신규 ${q.neu} · 소멸 ${q.gone} · 순 ${net > 0 ? "+" : ""}${net}`
+          + (q.enter ? ` · 편입 ${q.enter}` : "")));
+        out.push(row);
+      }
+      return out;
+    }));
+    hit.addEventListener("pointerleave", hideTip);
+  });
+
+  wrap.append(s);
+  if (entered.length) wrap.append(enterNote(entered));
+  return wrap;
+}
+
+function enterNote(entered) {
+  const txt = entered.map(x => `${cxName(x.cx)} ${x.n}건`).join(" · ");
+  const n = el("div", "sub", `조사 편입 ${txt} — 단지를 새로 넣은 조사일이라 신규가 아니다.`);
+  n.style.marginTop = "8px";
+  return n;
+}
+
 /* ── 배선 ─────────────────────────────────────────── */
 function renderAll() {
   renderTree(); renderTiles(); renderIntegrity();
-  renderDots(); renderHist(); renderTrend(); renderTable();
+  renderDots(); renderHist(); renderTrend(); renderQuartiles(); renderFlow(); renderTable();
 }
 
 document.getElementById("tt").addEventListener("click", ev => {
@@ -1167,7 +1482,7 @@ document.getElementById("meta").textContent =
   (LATEST ? DATA.snapshots[DATA.snapshots.length - 1].at.replace("T", " ").slice(0, 16) : "—");
 
 let rt;
-addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDots(); renderHist(); renderTrend(); }, 140); });
+addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDots(); renderHist(); renderTrend(); renderQuartiles(); renderFlow(); }, 140); });
 
 renderAll();
 </script>
