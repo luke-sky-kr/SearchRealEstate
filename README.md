@@ -85,6 +85,31 @@ python3 scripts/build_dashboard.py
 
 첫 스냅샷(2026-08-22): 원시 1174건 → 밴드 592~716건.
 
+## 자동 조사 (스케줄링)
+
+**PC를 계속 켜 둘 필요는 없다.** 이 노트북은 Modern Standby(S0 저전원 유휴, 네트워크 연결됨)라
+덮개를 닫아 자고 있어도 예약 시각에 깨어나 조사를 돌린다. 전원 어댑터에 꽂혀 있을 때만이다 —
+배터리로는 절전 해제 타이머가 꺼져 있고, 그대로 두는 게 맞다.
+
+WSL cron은 쓰지 않는다. WSL 인스턴스는 터미널을 닫으면 몇 초 뒤 종료되고, PC를 깨우지도 못한다.
+**트리거는 Windows 작업 스케줄러, 런타임은 WSL**이 맞는 조합이다.
+
+```powershell
+# Windows PowerShell에서 한 번만 (관리자 권한 불필요)
+Register-ScheduledTask -TaskName "naver-monitor" -Xml (Get-Content -Raw -Encoding UTF8 `
+  \\wsl$\Ubuntu\home\mike_lnx\projects\naver-monitor\naver-monitor\scripts\naver-monitor.task.xml)
+```
+
+- `scripts/naver-monitor.task.xml` — 하루 2회(07:30 / 19:30), 절전에서 깨워 실행, 놓치면 따라잡기,
+  배터리면 실행 안 함, 30분 제한, 중복 실행 금지.
+- `scripts/scheduled.sh` — 작업이 부르는 진입점. `flock`으로 겹침을 막고 `data/schedule.log`에 남긴다.
+
+PC가 꺼져 있어 놓친 조사일은 **결측으로 남기면 된다.** 대시보드는 안 훑은 날을 0이 아니라
+결측으로 그리므로 빈 칸이 거짓말을 하지 않는다. 억지로 채운 값이 진짜 값보다 나쁘다.
+
+수집은 반드시 사용자 PC에서 돈다. 네이버가 데이터센터 IP를 어떻게 대하는지 모르는 채로
+클라우드 러너에서 돌리면 IP 차단 위험만 떠안는다 — 차단당하면 프로젝트 전체가 멈춘다.
+
 ## 단지 추가
 
 `collect_naver.py` 상단 `COMPLEXES` 딕셔너리에 단지명을 추가한다. 단지번호는 자동 검색되며,
