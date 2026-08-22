@@ -222,12 +222,12 @@ td.desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-spa
     </div>
 
     <div class="quick">
-      <button class="btn" data-q="30">30평대만</button>
+      <button class="btn" data-q="30" title="단지마다 30평대. 30평대가 없으면 30평 이상 중 가장 작은 평형.">기본 평형</button>
       <button class="btn" data-q="all">전체 선택</button>
       <button class="btn" data-q="none">전체 해제</button>
     </div>
 
-    <h3 style="margin-top:12px">단지 · 동 · 평형 · 층</h3>
+    <h3 style="margin-top:12px">단지 · 동 · 평형 · 타입 · 층</h3>
     <div class="tree" id="tree"></div>
     <div class="selsum" id="selsum"></div>
   </aside>
@@ -319,14 +319,19 @@ const covered = (sid, cx) => (DATA.coverage[sid] || []).includes(cx);
 
 const eok = v => (v == null ? "—" : (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1) + "억");
 const num = v => (v == null ? "—" : v.toLocaleString("ko-KR"));
-const leafKey = u => [u.cx, u.dong, u.pk, u.fb].join("\u001f");
+// 잎은 단지 ▸ 동 ▸ 평형 ▸ 타입 ▸ 층. 같은 평형 안에서도 공급면적 타입이
+// 갈린다 — 팰리스 34평은 111A/113B/113C가 섞여 있고 실제로 0.5평씩 다르다.
+const leafKey = u => [u.cx, u.dong, u.pk, u.ty, u.fb].join("\u001f");
+// 평형은 단지 안에서만 뜻이 통한다. 전용면적이 같아도 전용률이 달라 공급 평형이 다르다.
+const areaKey = (cx, pk) => cx + "|" + pk;
 
 /* ── 필터 트리 모델 ───────────────────────────────── */
 const LEAVES = new Map();      // leafKey -> {cx,dong,pk,py,fb,n}
 for (const u of DATA.units) {
   if (u.sid !== LATEST) continue;
   const k = leafKey(u);
-  if (!LEAVES.has(k)) LEAVES.set(k, { cx: u.cx, dong: u.dong, pk: u.pk, py: u.py, fb: u.fb, n: 0 });
+  if (!LEAVES.has(k)) LEAVES.set(k, { cx: u.cx, dong: u.dong, pk: u.pk, py: u.py,
+                                      ty: u.ty, sup: u.sup, fb: u.fb, n: 0 });
   LEAVES.get(k).n++;
 }
 
@@ -340,8 +345,25 @@ function buildTree() {
     let dn = cxn.kids.get(v.dong);
     if (!dn) { dn = { id: cxn.id + "/" + v.dong, label: v.dong + "동", kids: new Map() }; cxn.kids.set(v.dong, dn); }
     let pn = dn.kids.get(v.pk);
-    if (!pn) { pn = { id: dn.id + "/" + v.pk, label: v.py + "평 (전용 " + v.pk + "㎡)", py: v.py, kids: new Map() }; dn.kids.set(v.pk, pn); }
-    pn.kids.set(v.fb, { id: pn.id + "/" + v.fb, label: v.fb, leaf: k, n: v.n });
+    if (!pn) {
+      const ak = areaKey(v.cx, v.pk), sup = DATA.supplyByKey?.[ak], types = DATA.areaTypes?.[ak] || [];
+      pn = { id: dn.id + "/" + v.pk, label: v.py + "평 · 전용 " + v.pk + "㎡", py: v.py,
+             hint: [`공급 ${sup ?? "?"}㎡ (${sup ? (sup / 3.3058).toFixed(1) : "?"}평)`,
+                    `전용 ${v.pk}㎡`,
+                    types.length ? `타입 ${types.join(" / ")}` : null].filter(Boolean).join(" · "),
+             kids: new Map() };
+      dn.kids.set(v.pk, pn);
+    }
+    let tn = pn.kids.get(v.ty);
+    if (!tn) {
+      const py1 = v.sup ? (v.sup / 3.3058).toFixed(1) + "평" : "평형 미상";
+      tn = { id: pn.id + "/" + (v.ty || "미상"),
+             label: (v.ty || "타입 미상") + " · " + py1,
+             hint: `공급 ${v.sup ?? "?"}㎡ · 전용 ${v.pk}㎡`,
+             sup: v.sup || 0, kids: new Map() };
+      pn.kids.set(v.ty, tn);
+    }
+    tn.kids.set(v.fb, { id: tn.id + "/" + v.fb, label: v.fb, leaf: k, n: v.n });
   }
   const sortKids = (node, cmp) => {
     node.children = [...node.kids.values()].sort(cmp);
@@ -353,7 +375,9 @@ function buildTree() {
   for (const c of root) {
     for (const d of sortKids(c, (a, b) => dongNum(a) - dongNum(b) || a.label.localeCompare(b.label, "ko"))) {
       for (const p of sortKids(d, (a, b) => a.py - b.py)) {
-        sortKids(p, (a, b) => (FLOOR_ORDER[a.label] ?? 9) - (FLOOR_ORDER[b.label] ?? 9));
+        for (const t of sortKids(p, (a, b) => a.sup - b.sup || a.label.localeCompare(b.label, "ko"))) {
+          sortKids(t, (a, b) => (FLOOR_ORDER[a.label] ?? 9) - (FLOOR_ORDER[b.label] ?? 9));
+        }
       }
     }
   }
@@ -367,23 +391,24 @@ function leavesUnder(node) {
 }
 
 /* ── 상태 ─────────────────────────────────────────── */
-// 기본은 30평대다. 다만 30평대가 아예 없는 단지도 있어서(LG한강자이 등),
-// 그럴 땐 그 단지에서 물건이 가장 많은 평형으로 채운다. 안 그러면 단지를
-// 새로 추가해도 첫 화면에서 통째로 사라진다.
+// 기본은 단지마다 30평대(국민평형)다. 30평대가 없는 단지도 있어서
+// (LG한강자이는 28평 다음이 54평) 그럴 땐 30평 이상 중 가장 작은 평형을,
+// 그것도 없으면 가장 큰 평형을 고른다. 평형은 단지 안에서 매긴 값이라
+// 단지마다 따로 판단해야 한다.
 function defaultSelection() {
   const out = new Set();
   for (const cx of CX_ORDER) {
-    const mine = [...LEAVES].filter(([, v]) => v.cx === cx);
-    const std = mine.filter(([, v]) => v.py >= 30 && v.py <= 39);
-    if (std.length) { for (const [k] of std) out.add(k); continue; }
     const byPy = new Map();
-    for (const [k, v] of mine) {
-      if (!byPy.has(v.py)) byPy.set(v.py, { n: 0, keys: [] });
-      const e = byPy.get(v.py); e.n += v.n; e.keys.push(k);
+    for (const [k, v] of LEAVES) {
+      if (v.cx !== cx) continue;
+      if (!byPy.has(v.py)) byPy.set(v.py, []);
+      byPy.get(v.py).push(k);
     }
-    let best = null;
-    for (const e of byPy.values()) if (!best || e.n > best.n) best = e;
-    if (best) for (const k of best.keys) out.add(k);
+    if (!byPy.size) continue;
+    const pys = [...byPy.keys()].sort((a, b) => a - b);
+    const pick = pys.filter(p => p >= 30 && p <= 39);
+    const chosen = pick.length ? pick : [pys.find(p => p >= 30) ?? pys[pys.length - 1]];
+    for (const p of chosen) for (const k of byPy.get(p)) out.add(k);
   }
   return out;
 }
@@ -486,6 +511,7 @@ function renderLevel(nodes) {
       save(); renderAll();
     };
     lab.append(cb, el("span", "name", node.label));
+    if (node.hint) lab.title = node.hint;
     const cnt = leavesUnder(node).reduce((a, k) => a + (LEAVES.get(k)?.n || 0), 0);
     lab.append(el("span", "cnt", String(cnt)));
     row.append(tw, lab);
@@ -834,7 +860,8 @@ function tipRows(u) {
   out.push(el("div", "v", eok(u.p) + (u.pmin !== u.pmax ? `  (${eok(u.pmin)}~${eok(u.pmax)})` : "")));
   const r = el("div", "r");
   const k = el("span", "k"); k.style.color = cxColor(u.cx);
-  r.append(k, el("span", null, `${cxName(u.cx)} ${u.dong}동 · ${u.py}평 · ${u.fi || u.fb}`));
+  r.append(k, el("span", null,
+    `${cxName(u.cx)} ${u.dong}동 · ${u.py}평${u.ty ? " " + u.ty : ""} · ${u.fi || u.fb}`));
   out.push(r);
   out.push(el("div", "r", `${TT_LABEL[u.tt]} · ${u.dir || "방향 미상"} · 등록 ${u.expo || "—"}`));
   out.push(el("div", "r", `매물 ${u.n}건 · 중개사 ${u.rt.length}곳 · 네이버 묶음 ${u.ng}`));
@@ -1136,6 +1163,7 @@ const COLS = [
   { k: "dong", t: "동", l: true, v: u => u.dong + "동" },
   { k: "tt", t: "유형", l: true, v: u => TT_LABEL[u.tt] || u.tt },
   { k: "py", t: "평형", v: u => u.py + "평" },
+  { k: "ty", t: "타입", l: true, v: u => u.ty || "—" },
   { k: "fi", t: "층", l: true, v: u => u.fi || u.fb },
   { k: "dir", t: "방향", l: true, v: u => u.dir || "—" },
   { k: "p", t: "호가", v: u => eok(u.p) },

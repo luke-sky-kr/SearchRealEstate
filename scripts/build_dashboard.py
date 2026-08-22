@@ -66,14 +66,29 @@ def build(db=DB):
     if not arts:
         raise SystemExit("dedup_assignments가 비어 있습니다. dedup.py를 먼저 실행하세요.")
 
-    amap = cluster_areas([a["area_exclusive"] for a in arts if a["area_exclusive"]])
-    # 군집 대표 전용면적 -> 평형 라벨 (군집 내 공급면적 중앙값 기준)
-    supply_by_rep = defaultdict(list)
+    # 평형 군집은 단지 안에서만 묶는다. 단지를 가로질러 묶으면 전용면적이 비슷해도
+    # 전용률이 달라 공급 평형이 어긋난다. 실제로 LG한강자이 55평(전용 134·공급 179)이
+    # 래미안퍼스티지 52평(전용 136·공급 173), 팰리스 51평(전용 133·공급 168)과
+    # 한 덩어리가 되어 셋 다 52평으로 표시됐다.
+    ex_by_cx = defaultdict(list)
     for a in arts:
-        if a["area_exclusive"] and a["area_supply"]:
-            supply_by_rep[amap[a["area_exclusive"]]].append(a["area_supply"])
-    pyeong = {rep: round(statistics.median(v) / PYEONG_M2)
-              for rep, v in supply_by_rep.items()}
+        if a["area_exclusive"]:
+            ex_by_cx[a["complex_no"]].append(a["area_exclusive"])
+    amap = {cx: cluster_areas(v) for cx, v in ex_by_cx.items()}
+    rep_of = lambda a: amap.get(a["complex_no"], {}).get(a["area_exclusive"])
+
+    # (단지, 군집 대표 전용면적) -> 평형 라벨. 공급면적 중앙값을 그 단지 안에서만 낸다.
+    supply_by_rep, types_by_rep = defaultdict(list), defaultdict(set)
+    for a in arts:
+        rep = rep_of(a)
+        if rep is None:
+            continue
+        if a["area_supply"]:
+            supply_by_rep[(a["complex_no"], rep)].append(a["area_supply"])
+        if a["area_name"]:
+            types_by_rep[(a["complex_no"], rep)].add(a["area_name"])
+    pyeong = {k: round(statistics.median(v) / PYEONG_M2)
+              for k, v in supply_by_rep.items()}
 
     # 조사일을 가로지르는 물건 식별자. 이게 있어야 신규/소멸을 조사일 축에서 셀 수 있다.
     uid = {(r["snapshot_id"], r["group_key"]): r["unit_id"]
@@ -92,7 +107,7 @@ def build(db=DB):
     for (sid, gk), members in groups.items():
         lead = min(members, key=lambda m: (m["price_krw"] is None, m["price_krw"]))
         prices = [m["price_krw"] for m in members if m["price_krw"] is not None]
-        rep_area = amap.get(lead["area_exclusive"])
+        rep_area = rep_of(lead)
         expo = sorted(m["exposure_date"] for m in members if m["exposure_date"])
         conf = sorted(m["confirmed_date"] for m in members if m["confirmed_date"])
         units.append({
@@ -100,9 +115,11 @@ def build(db=DB):
             "cx": lead["complex_no"], "tt": lead["trade_type"],
             "dong": lead["building"] or "미상",
             "pk": round(rep_area, 1) if rep_area else 0,      # 평형 군집 키
-            "py": pyeong.get(rep_area, 0),                     # 평형(공급 기준)
+            "py": pyeong.get((lead["complex_no"], rep_area), 0),  # 평형(공급 기준, 단지별)
             "ex": lead["area_exclusive"],
             "an": lead["area_name"],
+            "ty": lead["area_name"] or "",                      # 공급면적 타입 (네이버 표기)
+            "sup": lead["area_supply"],                         # 공급면적 ㎡
             "fb": floor_band(lead["floor_target"], lead["floor_total"]),
             "fi": lead["floor_info"],
             "dir": lead["direction"],
@@ -131,7 +148,12 @@ def build(db=DB):
         "coverage": {str(k): v for k, v in coverage.items()},
         "units": units,
         "integrity": integrity,
-        "pyeongByKey": {str(round(k, 1)): v for k, v in pyeong.items()},
+        # 평형 키는 단지마다 따로다 — "단지번호|대표전용면적"
+        "pyeongByKey": {f"{cx}|{round(rep, 1)}": v for (cx, rep), v in pyeong.items()},
+        "areaTypes": {f"{cx}|{round(rep, 1)}": sorted(v)
+                      for (cx, rep), v in types_by_rep.items()},
+        "supplyByKey": {f"{cx}|{round(rep, 1)}": round(statistics.median(v), 1)
+                        for (cx, rep), v in supply_by_rep.items()},
     }
 
 
@@ -152,7 +174,9 @@ def main(out_path=None):
     n_upper = sum(u["ng"] for u in data["units"])
     print(f"대시보드 생성: {os.path.abspath(out_path)}")
     print(f"  스냅샷 {len(data['snapshots'])}개 · 물건 {n_units}건(하한) ~ {n_upper}건(상한)")
-    print(f"  평형: {', '.join(f'{v}평' for v in sorted(set(data['pyeongByKey'].values())))}")
+    for cx, nm in sorted(data["complexes"].items(), key=lambda kv: kv[1]):
+        pys = sorted({v for k, v in data["pyeongByKey"].items() if k.startswith(cx + "|")})
+        print(f"  {nm}: {', '.join(f'{v}평' for v in pys)}")
 
 
 if __name__ == "__main__":
