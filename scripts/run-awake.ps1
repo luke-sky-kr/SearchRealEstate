@@ -9,7 +9,9 @@ $sig = @'
 public static extern uint SetThreadExecutionState(uint esFlags);
 '@
 $k = Add-Type -MemberDefinition $sig -Name Power -Namespace Win32 -PassThru
-$CONTINUOUS = [uint32]0x80000000
+# 0x80000000은 Int32로 파싱돼 음수가 되므로 L을 붙여 Int64로 읽힌 뒤 uint32로 간다.
+# 이걸 빼면 Windows PowerShell 5.1에서 형변환 예외로 작업이 통째로 죽는다.
+$CONTINUOUS = [uint32]0x80000000L
 $SYSTEM     = [uint32]0x00000001
 $AWAYMODE   = [uint32]0x00000040   # S3 기기용. Modern Standby에서는 무시되지만 해롭지 않다.
 
