@@ -88,20 +88,48 @@ python3 scripts/build_dashboard.py
 ## 자동 조사 (스케줄링)
 
 **PC를 계속 켜 둘 필요는 없다.** 이 노트북은 Modern Standby(S0 저전원 유휴, 네트워크 연결됨)라
-덮개를 닫아 자고 있어도 예약 시각에 깨어나 조사를 돌린다. 전원 어댑터에 꽂혀 있을 때만이다 —
-배터리로는 절전 해제 타이머가 꺼져 있고, 그대로 두는 게 맞다.
+덮개를 닫아 자고 있어도 예약 시각에 깨어나 조사를 돌리고 다시 잔다. 화면도 켜지지 않는다.
+
+배터리에서도 돌린다. 그러려면 세 가지가 맞아야 한다.
+
+1. 작업 설정에서 `DisallowStartIfOnBatteries`/`StopIfGoingOnBatteries`가 **false** (기본값은 true다)
+2. 전원 옵션의 "절전 모드 해제 타이머 허용"이 **DC(배터리)에서도 켜져** 있을 것
+3. 작업이 도는 동안 **시스템을 붙잡아 둘 것** (`scripts/run-awake.ps1`)
+
+3번이 없으면 작업은 시작만 되고 완주하지 못한다. 2026-08-23 실측: 08:45:03 대기 해제 →
+08:45:04 작업 시작 → **08:49:30 다시 대기 진입** → WSL VM 정지 → 09:15 시간 제한으로 강제 종료
+(수집 폴더에 10개 중 9개만 남았다). Modern Standby는 예약 작업을 깨워 시작시킨 뒤 몇 분 만에
+도로 잠든다. `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)`로 수집이 끝날 때까지
+붙잡는다.
+
+**배터리에서는 예약 시각에 깨어나지 않을 수 있다.** 같은 날 08:27:11 대기 진입 후 08:30 트리거는
+불발했고(RTCWAKE를 DC에서 켜 둔 상태였다), 08:45 사용자가 깨웠을 때 `StartWhenAvailable` 덕에
+밀린 작업이 그제야 돌았다. Modern Standby + 배터리에서 Windows가 타이머를 미루는 것으로 보인다.
+전원에 꽂혀 있으면 정시에 깨어난다. 놓친 조사는 다음 해제 시점에 따라잡히므로 그대로 둬도 된다 —
+조사일 축은 균등 간격을 요구하지 않는다.
+
+2번은 한 번만 켜면 된다. 되돌리려면 인덱스를 0으로 주면 된다.
+
+```powershell
+$g = (powercfg /getactivescheme -split 'GUID: ')[1].Split(' ')[0]
+powercfg /SETDCVALUEINDEX $g SUB_SLEEP RTCWAKE 1   # 0 = 원래대로
+powercfg /SETACTIVE $g
+```
 
 WSL cron은 쓰지 않는다. WSL 인스턴스는 터미널을 닫으면 몇 초 뒤 종료되고, PC를 깨우지도 못한다.
 **트리거는 Windows 작업 스케줄러, 런타임은 WSL**이 맞는 조합이다.
 
 ```powershell
-# Windows PowerShell에서 한 번만 (관리자 권한 불필요)
-Register-ScheduledTask -TaskName "naver-monitor" -Xml (Get-Content -Raw -Encoding UTF8 `
-  \\wsl$\Ubuntu\home\mike_lnx\projects\naver-monitor\naver-monitor\scripts\naver-monitor.task.xml)
+# PowerShell에서 한 번만 (관리자 권한 불필요)
+# encoding 치환이 필요하다 — PowerShell 문자열은 UTF-16인데 선언은 UTF-8이라 API가 거부한다
+$p = '\\wsl.localhost\Ubuntu\home\mike_lnx\projects\naver-monitor\naver-monitor\scripts\naver-monitor.task.xml'
+$xml = (Get-Content -Raw -Encoding UTF8 $p) -replace 'encoding="UTF-8"','encoding="UTF-16"'
+Register-ScheduledTask -TaskName 'naver-monitor' -Xml $xml -Force
 ```
 
-- `scripts/naver-monitor.task.xml` — 하루 2회(07:30 / 19:30), 절전에서 깨워 실행, 놓치면 따라잡기,
-  배터리면 실행 안 함, 30분 제한, 중복 실행 금지.
+- `scripts/run-awake.ps1` — 작업의 실제 진입점. 시스템을 붙잡고 WSL을 부른다.
+- `scripts/naver-monitor.task.xml` — **월·수·금 18:00**, 절전에서 깨워 실행, 놓치면 따라잡기,
+  배터리에서도 실행, 2시간 제한, 중복 실행 금지, 창 숨김.
 - `scripts/scheduled.sh` — 작업이 부르는 진입점. `flock`으로 겹침을 막고 `data/schedule.log`에 남긴다.
 
 PC가 꺼져 있어 놓친 조사일은 **결측으로 남기면 된다.** 대시보드는 안 훑은 날을 0이 아니라
