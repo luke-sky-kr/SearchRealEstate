@@ -64,15 +64,29 @@ def desc_sim(a, b):
 
 
 def pair_score(x, y):
-    """같은 (단지,거래유형,동,전용면적) 버킷 내 대표매물 쌍의 동일물건 점수."""
+    """같은 (단지,거래유형,동,전용면적) 버킷 내 대표매물 쌍의 동일물건 점수.
+
+    아래 두 휴리스틱은 snapshot 11 애매 쌍 733건을 실제로 판정해 확인한 패턴이다
+    (2026-09-12 검수):
+      - 동일 중개사 + 가격 다름 → 거의 항상 별개 세대. 한 사무소가 같은 동·같은
+        층대역에 서로 다른 세대를 동시에 중개하며 각자 다른 특징을 적어 올린다.
+        (예: "주인직.집보기좋음" vs "확장.초깨끗.정원뷰" — 같은 중개사, 가격도 다름)
+      - 다른 중개사 + 가격 근접(3% 이내) + 설명 유사도 ≥0.5 → 같은 세대를 복수
+        중개사가 공동중개로 올린 전형적 패턴. (예: "한강 premium 재건축" ↔
+        "50P 매수추천, 한강 premium 재건축")
+    """
     if x["direction"] and y["direction"] and x["direction"] != y["direction"]:
         return -99  # 한 세대가 두 방향일 수 없다
     s = floor_score(x, y)
     if s <= -90:
         return -99
     px, py = x["price_krw"], y["price_krw"]
+    same_realtor = bool(x["realtor"]) and x["realtor"] == y["realtor"]
+    diff = None
     if px and py:
         diff = abs(px - py) / max(px, py)
+        if same_realtor and diff > 0:
+            return -99  # 동일 중개사가 가격만 다르게 올린 두 건은 별개 세대로 확정
         if diff == 0:      s += 2.0
         elif diff <= 0.01: s += 1.0
         elif diff <= 0.03: s += 0.0
@@ -82,6 +96,8 @@ def pair_score(x, y):
     ds = desc_sim(x["description"], y["description"])
     if ds >= 0.6:   s += 1.5
     elif ds >= 0.3: s += 0.5
+    if not same_realtor and ds >= 0.5 and diff is not None and diff <= 0.03:
+        s += 1.5  # 공동중개 재구성 문구 패턴 — 동일 세대 쪽으로 강하게 밀어준다
     return s
 
 
