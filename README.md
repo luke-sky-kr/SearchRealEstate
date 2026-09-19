@@ -85,24 +85,28 @@ python3 scripts/build_dashboard.py
 
 첫 스냅샷(2026-08-22): 원시 1174건 → 밴드 592~716건.
 
-## 자동 조사 (스케줄링)
+## 조사는 수동으로 돈다
 
-**PC를 계속 켜 둘 필요는 없다.** 이 노트북은 Modern Standby(S0 저전원 유휴, 네트워크 연결됨)라
-덮개를 닫아 자고 있어도 예약 시각에 깨어나 조사를 돌리고 다시 잔다. 화면도 켜지지 않는다.
+필요할 때 직접 돌린다. 예약 스케줄러는 **2026-08-29에 걷어냈다.**
 
-배터리에서도 돌린다. 그러려면 세 가지가 맞아야 한다.
+```bash
+python3 run_all.py --note "메모"
+```
 
-1. 작업 설정에서 `DisallowStartIfOnBatteries`/`StopIfGoingOnBatteries`가 **false** (기본값은 true다)
-2. 전원 옵션의 "절전 모드 해제 타이머 허용"이 **DC(배터리)에서도 켜져** 있을 것
-3. 작업이 도는 동안 **시스템을 붙잡아 둘 것** (`scripts/run-awake.ps1`)
+조사일 축은 균등 간격을 요구하지 않는다. 각 조사는 실제 시각으로 그려지므로,
+사흘 만에 돌리든 2주 만에 돌리든 추이는 그대로 읽힌다. 안 훑은 날은 0이 아니라
+결측으로 그려서 빈 칸이 거짓말을 하지 않는다. 억지로 채운 값이 진짜 값보다 나쁘다.
 
-3번이 없으면 작업은 시작만 되고 완주하지 못한다. 2026-08-23 실측: 08:45:03 대기 해제 →
-08:45:04 작업 시작 → **08:49:30 다시 대기 진입** → WSL VM 정지 → 09:15 시간 제한으로 강제 종료
-(수집 폴더에 10개 중 9개만 남았다). Modern Standby는 예약 작업을 깨워 시작시킨 뒤 몇 분 만에
-도로 잠든다. `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)`로 수집이 끝날 때까지
-붙잡는다.
+수집은 반드시 사용자 PC에서 돈다. 네이버가 데이터센터 IP를 어떻게 대하는지 모르는 채로
+클라우드 러너에서 돌리면 IP 차단 위험만 떠안는다 — 차단당하면 프로젝트 전체가 멈춘다.
 
-**AC에서는 정시에 돈다. 배터리에서는 안 돈다.** 2026-08-23 실측 3회:
+### 왜 예약을 버렸나
+
+이 노트북은 **Modern Standby(S0 저전원 유휴) 전용**이다. `powercfg /a` 상 S1·S2·S3가
+모두 펌웨어 미지원이라, 작업 스케줄러의 `WakeToRun`이 기대대로 동작하지 않는다.
+전원 정책을 맞춰도(절전 해제 타이머 AC·DC 양쪽 켬) 결과가 전원 상태에 좌우됐다.
+
+2026-08-23 실측 3회 — **AC에서는 정시에 돌고, 배터리에서는 안 돈다.**
 
 | 시험 | 전원 | 예약 | 실제 실행 | 결과 |
 |---|---|---|---|---|
@@ -110,42 +114,31 @@ python3 scripts/build_dashboard.py
 | 09:45 | 배터리 | 09:45 | 09:49 (덮개 열 때) | exit 0 · 53초 |
 | 10:10 | **AC** | 10:10 | **10:10:00 정각** | exit 0 · 52초 |
 
-AC 시험(09:59:15 대기 진입, 덮개 닫힘)에서는 **대기 해제 이벤트(507)가 아예 찍히지 않았다.**
-시스템이 Modern Standby에서 나오지 않은 채로 작업을 돌렸다는 뜻이다 — 그게 Modern Standby의
-원래 동작이다. 배터리에서는 같은 대기 상태가 백그라운드 활동을 조여 작업이 밀린다.
+여기에 더해 작업이 시작돼도 몇 분 만에 도로 잠들어(08-23 08:45:04 시작 → 08:49:30 대기 진입 →
+WSL VM 정지 → 09:15 강제 종료, 수집 폴더에 10개 중 9개만) 시스템을 붙잡아 두는
+`SetThreadExecutionState` 래퍼가 따로 필요했다.
 
-배터리로 쓰겠다면 놓친 조사는 다음 사용 시점에 `StartWhenAvailable`로 따라잡힌다. 그대로 둬도
-된다 — 조사일 축은 균등 간격을 요구하지 않고, 각 조사의 실제 시각으로 그린다.
+그리고 실제로 놓쳤다. 월·수·금 18:00으로 돌린 첫 주에 **2회 결측**:
 
-2번은 한 번만 켜면 된다. 되돌리려면 인덱스를 0으로 주면 된다.
+| 조사일 | PC 상태 | 왜 안 돌았나 |
+|---|---|---|
+| 수 08-26 18:00 | 꺼짐 (08-25 12:55 ~ 08-28 12:27 이벤트 없음) | 꺼진 PC는 못 깨운다 |
+| 금 08-28 18:00 | Modern Standby (12:30 ~ 23:02 연속) | 18:00에 대기 해제가 아예 안 찍혔다 |
+
+`StartWhenAvailable` 따라잡기도 못 걸렸다 — 08-28에 부팅 **1분 뒤** 절전에 들어가 창이 닫혔다.
+
+정리하면, 노트북이 예약 시각에 깨어 있을지를 통제할 수 없는 이상 예약은 신뢰할 수 없고,
+신뢰할 수 없는 예약은 조용히 결측을 만든다. 조사 1회가 1분이면 끝나므로 손으로 돌리는 편이 낫다.
+
+`data/schedule.log`는 그때의 실행 기록으로 남겨 뒀다. 이제 아무것도 여기에 쓰지 않는다.
+
+예약용으로 켰던 배터리 절전 해제 타이머를 되돌리려면 (선택):
 
 ```powershell
 $g = (powercfg /getactivescheme -split 'GUID: ')[1].Split(' ')[0]
-powercfg /SETDCVALUEINDEX $g SUB_SLEEP RTCWAKE 1   # 0 = 원래대로
+powercfg /SETDCVALUEINDEX $g SUB_SLEEP RTCWAKE 0
 powercfg /SETACTIVE $g
 ```
-
-WSL cron은 쓰지 않는다. WSL 인스턴스는 터미널을 닫으면 몇 초 뒤 종료되고, PC를 깨우지도 못한다.
-**트리거는 Windows 작업 스케줄러, 런타임은 WSL**이 맞는 조합이다.
-
-```powershell
-# PowerShell에서 한 번만 (관리자 권한 불필요)
-# encoding 치환이 필요하다 — PowerShell 문자열은 UTF-16인데 선언은 UTF-8이라 API가 거부한다
-$p = '\\wsl.localhost\Ubuntu\home\mike_lnx\projects\naver-monitor\naver-monitor\scripts\naver-monitor.task.xml'
-$xml = (Get-Content -Raw -Encoding UTF8 $p) -replace 'encoding="UTF-8"','encoding="UTF-16"'
-Register-ScheduledTask -TaskName 'naver-monitor' -Xml $xml -Force
-```
-
-- `scripts/run-awake.ps1` — 작업의 실제 진입점. 시스템을 붙잡고 WSL을 부른다.
-- `scripts/naver-monitor.task.xml` — **월·수·금 18:00**, 절전에서 깨워 실행, 놓치면 따라잡기,
-  배터리에서도 실행, 2시간 제한, 중복 실행 금지, 창 숨김.
-- `scripts/scheduled.sh` — 작업이 부르는 진입점. `flock`으로 겹침을 막고 `data/schedule.log`에 남긴다.
-
-PC가 꺼져 있어 놓친 조사일은 **결측으로 남기면 된다.** 대시보드는 안 훑은 날을 0이 아니라
-결측으로 그리므로 빈 칸이 거짓말을 하지 않는다. 억지로 채운 값이 진짜 값보다 나쁘다.
-
-수집은 반드시 사용자 PC에서 돈다. 네이버가 데이터센터 IP를 어떻게 대하는지 모르는 채로
-클라우드 러너에서 돌리면 IP 차단 위험만 떠안는다 — 차단당하면 프로젝트 전체가 멈춘다.
 
 ## 단지 추가
 
@@ -170,6 +163,7 @@ PC가 꺼져 있어 놓친 조사일은 **결측으로 남기면 된다.** 대�
 | Dedup (규칙 + AI 2단계) | 규칙 완료 · AI 판정 자동화 미착수 |
 | 정합성 감시 (`integrity.py`) | 완료 |
 | 대시보드 v1 (`build_dashboard.py`) | 완료 |
-| run_all 오케스트레이터 | 미착수 |
+| run_all 오케스트레이터 (`run_all.py`) | 완료 · 수동 조사의 단일 진입점 |
 
-M1(첫 스냅샷 E2E)과 M2(대시보드 v1) 완료. 다음은 M3(AI dedup 자동화 + run_all) — `DEVELOPMENT_PLAN.md` §12 참조.
+M1(첫 스냅샷 E2E)·M2(대시보드 v1)·run_all 완료. 남은 건 M3의 AI dedup 자동화 —
+애매 쌍은 `data/ambiguous_<sid>.json`에 쌓여 있다. `DEVELOPMENT_PLAN.md` §12 참조.

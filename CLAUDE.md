@@ -77,6 +77,11 @@ data/monitor.db           SQLite
 파이프라인: `collect → ingest → dedup → (AI 판정) → dedup apply → integrity → link → dashboard`
 평소에는 `python3 run_all.py` 한 줄이면 된다.
 
+**조사는 사용자가 지시할 때만 돈다.** 예약 스케줄러는 쓰지 않는다(2026-08-29 폐기).
+이 노트북은 Modern Standby 전용이라 예약 시각에 깨어 있을지를 통제할 수 없고,
+신뢰할 수 없는 예약은 조용히 결측을 만든다 — 실측 근거는 README의 "왜 예약을 버렸나".
+자동화를 다시 제안하지 말 것. 조사 1회는 1분이면 끝난다.
+
 ## 데이터 모델 요점
 
 - `raw_articles` — 수집 원본. 스냅샷×매물번호 PK. 대표매물(`is_repr=1`)과 네이버 묶음 멤버(`is_repr=0`)가 모두 1행씩 들어간다. 층은 `floor_info`에 `저/34`(대역, 96%) 또는 `15/34`(정확층, 4%)로 들어오며 `floor_target`/`floor_total`로 분해되어 있다. 가격은 만원 단위 정수.
