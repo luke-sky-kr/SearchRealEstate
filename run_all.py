@@ -11,6 +11,7 @@
   python3 run_all.py --no-collect     이미 받아둔 최신 naver_data 폴더로 적재부터
   python3 run_all.py --dir <폴더>      특정 수집 폴더로 적재부터
   python3 run_all.py --note "메모"     스냅샷에 메모를 남긴다
+  python3 run_all.py -h | --help      이 도움말 (수집하지 않음)
 """
 import os, sys, glob, time, traceback
 
@@ -34,6 +35,21 @@ def step(n, total, title):
 
 
 def main(argv):
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    # 모르는 인자를 흘려보내면 그대로 실제 수집이 돈다. 오타 하나가 네이버 호출이 되지 않게 막는다.
+    known, takes_value = {"--no-collect", "--dir", "--note"}, {"--dir", "--note"}
+    i = 0
+    while i < len(argv):
+        if argv[i] not in known:
+            raise SystemExit(f"알 수 없는 인자: {argv[i]}\n{__doc__}")
+        if argv[i] in takes_value:
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{argv[i]} 뒤에 값이 필요합니다.")
+            i += 1
+        i += 1
+
     note = ""
     if "--note" in argv:
         note = argv[argv.index("--note") + 1]
