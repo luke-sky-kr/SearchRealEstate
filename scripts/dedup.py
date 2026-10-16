@@ -63,6 +63,33 @@ def desc_sim(a, b):
     return len(ta & tb) / len(ta | tb) if ta and tb else 0.0
 
 
+_PHONE = re.compile(r"\d[\d.\-]{3,}\d")
+# 긴 것부터: 앞 대안이 먼저 맞으면 '공인중개사무소'가 '공인중개사'+'무소'로 쪼개진다
+_REALTOR_NOISE = re.compile(
+    r"\(주\)|주식회사|유한회사|분사무소|공인중개사사무소|공인중개사무소|중개사사무소|"
+    r"중개사무소|공인중개사|공인중개|부동산|중개사|중개|법인|사무소|사무|컨설팅")
+
+
+def realtor_key(name):
+    """중개사 이름에서 표기 변형을 걷어낸 비교 키.
+
+    같은 사무소가 매물마다 이름을 다르게 올린다(snapshot 17 애매 쌍 검수, 2026-10-17):
+      '딥블루공인중개사사무소' / '압구정딥블루공인중개사사무소'
+      '주식회사골드웰부동산중개법인' / '압구정골드웰부동산중개사무소'
+    문자열 그대로 비교하면 동일 중개사 배제 규칙을 빠져나가고, 같은 문구 틀 덕에
+    설명 유사도 가점까지 받는다. 법인 표기·전화번호·업종 접미어·공백과 앞의
+    '압구정'을 걷어내고 비교한다. 지점명('여의도점')은 남긴다 — 럭셔리앤하우스
+    지점들은 서로 다른 사무소다.
+    키가 우연히 겹치면(예: '압구정현대' / '현대') 별개 세대 쪽으로 판정되어 하한이
+    덜 조여질 뿐, 다른 세대를 합치는 쪽으로는 틀리지 않는다.
+    """
+    s = _REALTOR_NOISE.sub("", _PHONE.sub("", name or ""))
+    s = re.sub(r"[^\w]", "", s)
+    if s.startswith("압구정") and len(s) > 3:
+        s = s[3:]
+    return s
+
+
 def pair_score(x, y):
     """같은 (단지,거래유형,동,전용면적) 버킷 내 대표매물 쌍의 동일물건 점수.
 
@@ -81,7 +108,8 @@ def pair_score(x, y):
     if s <= -90:
         return -99
     px, py = x["price_krw"], y["price_krw"]
-    same_realtor = bool(x["realtor"]) and x["realtor"] == y["realtor"]
+    rx = realtor_key(x["realtor"])
+    same_realtor = bool(rx) and rx == realtor_key(y["realtor"])
     diff = None
     if px and py:
         diff = abs(px - py) / max(px, py)
