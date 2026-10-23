@@ -70,6 +70,13 @@ _REALTOR_NOISE = re.compile(
     r"중개사무소|공인중개사|공인중개|부동산|중개사|중개|법인|사무소|사무|컨설팅")
 
 
+# 표기 정규화로 안 잡히는 동일 사무소. 지명을 일괄로 걷어내면 '현대'/'반포현대'처럼
+# 흔한 상호의 다른 사무소까지 묶이므로, 근거가 확인된 것만 하나씩 넣는다.
+REALTOR_ALIAS = {
+    "반포한국": "한국",  # '한국593-3000'과 같은 '韓國 O … O' 서명 문구 (snapshot 18 검수)
+}
+
+
 def realtor_key(name):
     """중개사 이름에서 표기 변형을 걷어낸 비교 키.
 
@@ -87,7 +94,7 @@ def realtor_key(name):
     s = re.sub(r"[^\w]", "", s)
     if s.startswith("압구정") and len(s) > 3:
         s = s[3:]
-    return s
+    return REALTOR_ALIAS.get(s, s)
 
 
 def pair_score(x, y):
