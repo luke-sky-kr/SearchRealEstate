@@ -143,6 +143,12 @@ def run(rebuild=False):
         prev_groups = load_groups(con, last)
         prev_unit = {r["group_key"]: r["unit_id"] for r in con.execute(
             "SELECT group_key, unit_id FROM unit_links WHERE snapshot_id=?", (last,))}
+        # 연결 뒤에 지난 스냅샷의 dedup을 다시 돌리면 그룹키가 바뀌어 저장된
+        # unit_links와 어긋난다. 그 위에 이어 붙이면 깨지므로 전체를 다시 잇는다.
+        if set(prev_unit) != set(prev_groups):
+            print(f"  스냅샷 {last}의 dedup 그룹이 연결 이후 바뀜 -> 전체 재연결")
+            con.close()
+            return run(rebuild=True)
 
     for sn in snaps:
         sid = sn["snapshot_id"]
